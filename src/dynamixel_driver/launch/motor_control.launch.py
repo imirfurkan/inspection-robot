@@ -44,8 +44,6 @@ def generate_launch_description():
                 'max_angular_speed': 1.0,
                 'axis_linear': 1,
                 'axis_angular': 2,
-                'axis_block': 0,
-                'block_threshold': 0.5,
                 'enable_button': -1,    # set to 0 for trigger deadman switch
             }],
         ),

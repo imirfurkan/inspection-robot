@@ -13,7 +13,7 @@ dynamixel_driver_node:
 
     # Velocity limits (Dynamixel unit: ~0.229 RPM per unit)
     # XH540-W140 max is ~37 RPM → ~161 units
-    max_velocity: 100       # conservative limit
+    max_velocity: 160       # conservative limit
     deadzone: 0.15          # joystick deadzone (0.0 - 1.0)
 
     # Control loop rate (Hz)

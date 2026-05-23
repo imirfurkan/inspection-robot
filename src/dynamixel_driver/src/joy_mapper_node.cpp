@@ -37,8 +37,6 @@ public:
         this->declare_parameter("max_angular_speed", 1.0);   // normalized 0-1
         this->declare_parameter("axis_linear", 1);           // stick Y
         this->declare_parameter("axis_angular", 2);          // stick twist
-        this->declare_parameter("axis_block", 0);            // stick X
-        this->declare_parameter("block_threshold", 0.5);     // X-axis blocking
         this->declare_parameter("enable_button", -1);        // -1 = no deadman switch
 
         deadzone_         = this->get_parameter("deadzone").as_double();
@@ -46,8 +44,6 @@ public:
         max_angular_speed_ = this->get_parameter("max_angular_speed").as_double();
         axis_linear_      = this->get_parameter("axis_linear").as_int();
         axis_angular_     = this->get_parameter("axis_angular").as_int();
-        axis_block_       = this->get_parameter("axis_block").as_int();
-        block_threshold_  = this->get_parameter("block_threshold").as_double();
         enable_button_    = this->get_parameter("enable_button").as_int();
 
         // Publishers and subscribers
@@ -58,8 +54,8 @@ public:
             std::bind(&JoyMapperNode::joyCallback, this, std::placeholders::_1));
 
         RCLCPP_INFO(this->get_logger(),
-            "Joy mapper started — linear:axis[%d] angular:axis[%d] block:axis[%d] deadzone:%.2f",
-            axis_linear_, axis_angular_, axis_block_, deadzone_);
+            "Joy mapper started — linear:axis[%d] angular:axis[%d] deadzone:%.2f",
+            axis_linear_, axis_angular_, deadzone_);
     }
 
 private:
@@ -68,7 +64,7 @@ private:
         geometry_msgs::msg::Twist twist;
 
         // Safety: check array bounds
-        if (msg->axes.size() <= static_cast<size_t>(std::max({axis_linear_, axis_angular_, axis_block_}))) {
+        if (msg->axes.size() <= static_cast<size_t>(std::max(axis_linear_, axis_angular_))) {
             RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
                 "Joy message has fewer axes than expected");
             cmd_pub_->publish(twist);  // publish zero
@@ -87,13 +83,6 @@ private:
         // Read raw axes
         double linear_raw  = -msg->axes[axis_linear_];   // invert: push forward = positive
         double angular_raw =  msg->axes[axis_angular_];
-        double block_raw   =  msg->axes[axis_block_];
-
-        // X-axis blocking: if stick pushed too far sideways, kill motors
-        if (std::abs(block_raw) > block_threshold_) {
-            cmd_pub_->publish(twist);  // publish zero
-            return;
-        }
 
         // Apply deadzone
         linear_raw  = applyDeadzone(linear_raw);
@@ -122,8 +111,6 @@ private:
     double max_angular_speed_;
     int    axis_linear_;
     int    axis_angular_;
-    int    axis_block_;
-    double block_threshold_;
     int    enable_button_;
 
     // ROS interfaces
