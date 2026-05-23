@@ -8,13 +8,6 @@ dynamixel_driver_node:
     # Motor IDs — your 4 Dynamixel XH540-W140-R motors
     motor_ids: [1, 6, 8, 10]
 
-    # Motor layout (looking from behind the robot):
-    #   Front-Left: ID 1    Front-Right: ID 6
-    #   Rear-Left:  ID 8    Rear-Right:  ID 10
-    #
-    # Right-side motors spin in reverse direction for forward motion
-    reverse_ids: [6, 10]
-
     # Operating mode: "velocity" or "position"
     operating_mode: "velocity"
 
@@ -25,6 +18,3 @@ dynamixel_driver_node:
 
     # Control loop rate (Hz)
     loop_rate: 50.0
-
-    # Safety: auto-stop if no command received for this many seconds
-    cmd_timeout: 0.5
