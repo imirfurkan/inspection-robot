@@ -62,7 +62,7 @@ public:
     }
 
 private:
-    double applyDeadzone(double val) const // #TODO what does const mean here
+    double applyDeadzone(double val) const // method being const shows it will not modify any member variables of the class.
     {
         if (std::abs(val) < deadzone_) return 0.0;
         // Rescale so output starts from 0 after deadzone
@@ -72,7 +72,7 @@ private:
 
     void joyCallback(const sensor_msgs::msg::Joy::SharedPtr msg)
     {
-        // ── Drive mode buttons ── // #TODO understand this
+        // ── Drive mode buttons ──
         if (btn_all_velocity_ >= 0 &&
             btn_all_velocity_ < static_cast<int>(msg->buttons.size()) &&
             msg->buttons[btn_all_velocity_])
@@ -93,7 +93,7 @@ private:
             RCLCPP_INFO(this->get_logger(), "Mode switch: SPLIT (rear vel, front current)");
         }
 
-        // ── Deadman switch check ── // #TODO understand this
+        // ── Deadman switch check ── // #TODO understand this, how do buttons work, just change of state makes it postiive etc?
         if (enable_button_ >= 0) {
             if (enable_button_ >= static_cast<int>(msg->buttons.size()) ||
                 !msg->buttons[enable_button_])

@@ -58,6 +58,7 @@ public:
     DynamixelDriverNode() : Node("dynamixel_driver_node")
     {
         // ── Declare parameters ──
+        // YAML values override these defaults.
         this->declare_parameter("port_name", "/dev/ttyUSB0");
         this->declare_parameter("baudrate", 57600);
         this->declare_parameter("motor_ids", std::vector<int64_t>{1, 6, 8, 10});
@@ -65,16 +66,19 @@ public:
         this->declare_parameter("front_ids", std::vector<int64_t>{10, 6});
         this->declare_parameter("rear_ids", std::vector<int64_t>{1, 8});
         this->declare_parameter("operating_mode", "velocity");
-        this->declare_parameter("max_velocity", 100); // TODO
-        this->declare_parameter("max_current_ma", 400.0); // TODO do we really have to change on both yaml file and here?
+        this->declare_parameter("max_velocity", 100);
+        this->declare_parameter("max_current_ma", 400.0); 
         this->declare_parameter("deadzone", 0.15);
         this->declare_parameter("loop_rate", 50.0);
 
         // ── Read parameters ──
-        // TODO understand C++ implementation, like data type selections, push back, insert and the necessity to use two lines per parameter
         port_name_ = this->get_parameter("port_name").as_string();
         baudrate_  = this->get_parameter("baudrate").as_int();
 
+        // motor_ids_ is a vector (ordered list, you iterate in order), reverse_ids_ is a set
+        // (unordered collection where .count(id) is fast lookup — O(log n) vs O(n) for vector).
+        // We use set for reverse/front/rear IDs because we only ever ask "is this ID in the set?"
+        // — never "what's the third reverse ID?"
         auto id_vec = this->get_parameter("motor_ids").as_integer_array();
         for (auto id : id_vec) motor_ids_.push_back(static_cast<uint8_t>(id));
 
@@ -89,6 +93,7 @@ public:
 
         max_velocity_ = this->get_parameter("max_velocity").as_int();
         max_current_ma_ = this->get_parameter("max_current_ma").as_double();
+        max_current_units_ = static_cast<int16_t>(max_current_ma_ / CURRENT_UNIT_MA); // Dynamixel current is set in discrete units, so we convert from mA to units here.
         double loop_rate = this->get_parameter("loop_rate").as_double();
 
         // ── Initialize Dynamixel SDK ──
@@ -114,7 +119,7 @@ public:
         // ── ROS2 pub/sub ──
         cmd_sub_ = this->create_subscription<geometry_msgs::msg::Twist>(
             "/cmd_vel", 10,
-            std::bind(&DynamixelDriverNode::cmdVelCallback, this, std::placeholders::_1)); // TODO where is Callback variable used?
+            std::bind(&DynamixelDriverNode::cmdVelCallback, this, std::placeholders::_1));
 
         mode_sub_ = this->create_subscription<std_msgs::msg::String>(
             "/drive_mode", 10,
@@ -132,8 +137,11 @@ public:
             max_velocity_, max_current_ma_, max_current_units_);
     }
 
-    // TODO understand destructor
-    ~DynamixelDriverNode() // TODO what is ~ before the class name
+    // The constructor runs when the object is created, the destructor runs when it's destroyed.
+    // In ROS2, when you press Ctrl+C, rclcpp::shutdown() triggers the node's destruction, which calls the destructor.
+    // That's where you stop motors and close the port — guaranteed cleanup even if the shutdown is unexpected.
+    // Without it, killing the node would leave motors spinning with torque enabled.
+    ~DynamixelDriverNode() // destructor
     {
         // Stop all motors and disable torque
         for (uint8_t id : active_ids_) {

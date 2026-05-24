@@ -18,15 +18,14 @@ dynamixel_driver_node:
     operating_mode: "velocity"
 
     # Velocity limits (Dynamixel unit: ~0.229 RPM per unit)
-    # TODO check the rpm per unit value and max value of the motors. 
-    max_velocity: 180       # conservative limit
+    # Max rpm: 67 rpm at 11.1V, so 67 / 0.229 = 292 units. Set something conservative.
+    max_velocity: 218       # conservative limit at 50 rpm
     deadzone: 0.15          # joystick deadzone (0.0 - 1.0)
 
     # Max current for front wheels in split_mode (milliamps).
-    # XH540-W140-R stall current is ~4200 mA. Start low and tune up.
-    # 400 mA = gentle assist, 800 mA = strong assist
-    # TODO tune here.
-    max_current_ma: 400.0
+    # XH540-W140-R stall current is ~4200 mA. At 50 RPM, current is around 1.4A.
+    # TODO tune here. 
+    max_current_ma: 1400.0
 
     # Control loop rate (Hz)
     loop_rate: 50.0
