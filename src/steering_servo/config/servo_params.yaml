@@ -1,0 +1,21 @@
+# steering_servo parameters
+steering_servo_node:
+  ros__parameters:
+    # Hardware PWM
+    pwm_chip: 0
+    pwm_channel: 0          # PWM0 = GPIO 12
+
+    # DS3235-180 servo range
+    servo_min_deg: 10.0      # physical hard-stop left
+    servo_max_deg: 162.0     # physical hard-stop right
+    servo_center_deg: 90.0   # straight ahead
+
+    # DS3235-180 pulse range
+    pulse_min_us: 500        # 0°
+    pulse_max_us: 2500       # 180°
+    period_ns: 20000000      # 50 Hz
+
+    # Discrete steering control
+    steer_threshold: 0.8     # axis value to trigger steer (0.0–1.0)
+    axis_steer: 2            # joystick axis for steering (twist)
+    button_center: 3         # button to center servo
