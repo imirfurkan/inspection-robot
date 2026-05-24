@@ -8,18 +8,25 @@ dynamixel_driver_node:
     # Motor IDs — your 4 Dynamixel XH540-W140-R motors
     motor_ids: [1, 6, 8, 10]
 
-    # Motors that need their velocity negated for forward motion.
-    # Set this to whichever IDs spin backward when you push joystick forward.
-    # Start with an empty list, test, then add the IDs that go the wrong way.
+    front_ids: [10, 6]
+    rear_ids: [1, 8]
+
+    # Motors that need their velocity/current negated for forward motion.
     reverse_ids: [1, 6] ## [1, 6]
 
-    # Operating mode: "velocity" or "position"
+    # Operating mode: "velocity" (default startup mode)
     operating_mode: "velocity"
 
     # Velocity limits (Dynamixel unit: ~0.229 RPM per unit)
-    # XH540-W140 max is ~37 RPM → ~161 units
+    # TODO check the rpm per unit value and max value of the motors. 
     max_velocity: 180       # conservative limit
     deadzone: 0.15          # joystick deadzone (0.0 - 1.0)
+
+    # Max current for front wheels in split_mode (milliamps).
+    # XH540-W140-R stall current is ~4200 mA. Start low and tune up.
+    # 400 mA = gentle assist, 800 mA = strong assist
+    # TODO tune here.
+    max_current_ma: 400.0
 
     # Control loop rate (Hz)
     loop_rate: 50.0
