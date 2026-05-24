@@ -8,12 +8,17 @@ dynamixel_driver_node:
     # Motor IDs — your 4 Dynamixel XH540-W140-R motors
     motor_ids: [1, 6, 8, 10]
 
+    # Motors that need their velocity negated for forward motion.
+    # Set this to whichever IDs spin backward when you push joystick forward.
+    # Start with an empty list, test, then add the IDs that go the wrong way.
+    reverse_ids: [1, 6] ## [1, 6]
+
     # Operating mode: "velocity" or "position"
     operating_mode: "velocity"
 
     # Velocity limits (Dynamixel unit: ~0.229 RPM per unit)
     # XH540-W140 max is ~37 RPM → ~161 units
-    max_velocity: 160       # conservative limit
+    max_velocity: 180       # conservative limit
     deadzone: 0.15          # joystick deadzone (0.0 - 1.0)
 
     # Control loop rate (Hz)
