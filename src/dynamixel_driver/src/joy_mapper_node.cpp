@@ -16,6 +16,7 @@
  *   button 3 = center servo (used for steering)
  *   button 7 = all velocity mode
  *   button 8 = split mode (rear velocity, front current)
+ *   button 9 = hold front drive (rear holds, front nudges)
  */
 
 #include <rclcpp/rclcpp.hpp>
@@ -39,6 +40,7 @@ public:
         this->declare_parameter("enable_button", -1);        // -1 = no deadman switch
         this->declare_parameter("button_all_velocity", 7);
         this->declare_parameter("button_split_mode", 8);
+        this->declare_parameter("button_hold_front_drive", 9);
 
         deadzone_          = this->get_parameter("deadzone").as_double();
         max_linear_speed_  = this->get_parameter("max_linear_speed").as_double();
@@ -93,6 +95,16 @@ private:
             RCLCPP_INFO(this->get_logger(), "Mode switch: SPLIT (rear vel, front current)");
         }
 
+        if (btn_hold_front_ >= 0 &&
+            btn_hold_front_ < static_cast<int>(msg->buttons.size()) &&
+            msg->buttons[btn_hold_front_])
+        {
+            auto mode_msg = std_msgs::msg::String();
+            mode_msg.data = "hold_front_drive";
+            mode_pub_->publish(mode_msg);
+            RCLCPP_INFO(this->get_logger(), "Mode switch: HOLD_FRONT_DRIVE (rear hold, front nudge)");
+        }
+
         // ── Deadman switch check ── // #TODO understand this, how do buttons work, just change of state makes it postiive etc?
         if (enable_button_ >= 0) {
             if (enable_button_ >= static_cast<int>(msg->buttons.size()) ||
@@ -131,6 +143,7 @@ private:
     int enable_button_;
     int btn_all_velocity_;
     int btn_split_mode_;
+    int btn_hold_front_;
 
     // ROS2
     rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr cmd_pub_;

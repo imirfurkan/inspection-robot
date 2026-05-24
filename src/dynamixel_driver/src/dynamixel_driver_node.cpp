@@ -12,13 +12,18 @@
  * Two drive modes:
  *   "all_velocity" — all motors in velocity mode (default)
  *   "split_mode"   — rear motors in velocity mode, front motors in current mode
+ *   "hold_front_drive" — rear velocity=0 (holds position) + front current (nudge)
  *
  * In split_mode, front wheel current is proportional to the rear velocity
  * command, providing compliant torque assist without fighting the rear wheels.
  *
+ * Rear motors ALWAYS stay in velocity mode. Only front motors switch
+ * between velocity and current mode. This means rear wheels never lose
+ * torque during a mode switch — no rollback on slopes.
+
  * Publishes /motor_status (Float32MultiArray) with telemetry.
  *
- * link to the emanual: https://emanual.robotis.com/docs/en/dxl/x/xw540-t140/
+ * e-manual: https://emanual.robotis.com/docs/en/dxl/x/xw540-t140/
  */
 
 #include <rclcpp/rclcpp.hpp>
@@ -157,8 +162,14 @@ public:
     }
 
 private:
-    enum class DriveMode { ALL_VELOCITY, SPLIT_MODE };
+    enum class DriveMode { ALL_VELOCITY, SPLIT_MODE, HOLD_FRONT_DRIVE };
  
+    // ── Helper: do front motors need current mode in this drive mode? ──
+    bool frontNeedsCurrent(DriveMode mode) const
+    {
+        return mode == DriveMode::SPLIT_MODE || mode == DriveMode::HOLD_FRONT_DRIVE;
+    }
+
     // ── Motor initialization ──────────────────────────────────────
     bool initMotors()
     {
@@ -193,37 +204,65 @@ private:
         motors_initialized_ = !active_ids_.empty();
  
         if (motors_initialized_) {
-            applyDriveMode();
+            // Set all motors to velocity mode on startup
+            for (uint8_t id : active_ids_) {
+                writeByteRegister(id, ADDR_TORQUE_ENABLE, 0);
+                writeByteRegister(id, ADDR_OPERATING_MODE, MODE_VELOCITY);
+                writeByteRegister(id, ADDR_TORQUE_ENABLE, 1);
+                RCLCPP_INFO(this->get_logger(), "Motor ID %d: VELOCITY mode, torque ON", id);
+            }
         }
  
         return motors_initialized_;
     }
  
-    // ── Apply drive mode to motors ────────────────────────────────
-    void applyDriveMode()
+    // DEPRECEATED
+    // void applyDriveMode()
+    // {
+    //     for (uint8_t id : active_ids_) {
+    //         // Disable torque before changing mode
+    //         writeByteRegister(id, ADDR_TORQUE_ENABLE, 0);
+ 
+    //         uint8_t mode;
+    //         if (drive_mode_ == DriveMode::SPLIT_MODE && front_ids_.count(id)) {
+    //             mode = MODE_CURRENT;
+    //             RCLCPP_INFO(this->get_logger(),
+    //                 "Motor ID %d: CURRENT mode (front, compliant)", id);
+    //         } else {
+    //             mode = MODE_VELOCITY;
+    //             RCLCPP_INFO(this->get_logger(),
+    //                 "Motor ID %d: VELOCITY mode", id);
+    //         }
+ 
+    //         writeByteRegister(id, ADDR_OPERATING_MODE, mode);
+ 
+    //         // Re-enable torque
+    //         writeByteRegister(id, ADDR_TORQUE_ENABLE, 1);
+    //     }
+    // }
+ 
+    // ── Switch front motors between velocity and current mode ─────
+    // Only touches front motors. Rear motors keep running undisturbed.
+    void switchFrontMode(uint8_t new_mode)
     {
         for (uint8_t id : active_ids_) {
-            // Disable torque before changing mode
+            if (!front_ids_.count(id)) continue;  // skip rear motors
+ 
+            // Zero out front motor commands before switching
+            writeWordRegister(id, ADDR_GOAL_CURRENT, 0);
+            writeDwordRegister(id, ADDR_GOAL_VELOCITY, 0);
+ 
+            // Torque off → change mode → torque on
             writeByteRegister(id, ADDR_TORQUE_ENABLE, 0);
- 
-            uint8_t mode;
-            if (drive_mode_ == DriveMode::SPLIT_MODE && front_ids_.count(id)) {
-                mode = MODE_CURRENT;
-                RCLCPP_INFO(this->get_logger(),
-                    "Motor ID %d: CURRENT mode (front, compliant)", id);
-            } else {
-                mode = MODE_VELOCITY;
-                RCLCPP_INFO(this->get_logger(),
-                    "Motor ID %d: VELOCITY mode", id);
-            }
- 
-            writeByteRegister(id, ADDR_OPERATING_MODE, mode);
- 
-            // Re-enable torque
+            writeByteRegister(id, ADDR_OPERATING_MODE, new_mode);
             writeByteRegister(id, ADDR_TORQUE_ENABLE, 1);
+ 
+            const char* mode_name = (new_mode == MODE_CURRENT) ? "CURRENT" : "VELOCITY";
+            RCLCPP_INFO(this->get_logger(),
+                "Motor ID %d: switched to %s mode", id, mode_name);
         }
     }
- 
+
     // ── Callbacks ─────────────────────────────────────────────────
     void modeCallback(const std_msgs::msg::String::SharedPtr msg)
     {
@@ -234,6 +273,8 @@ private:
             new_mode = DriveMode::ALL_VELOCITY;
         } else if (msg->data == "split_mode") {
             new_mode = DriveMode::SPLIT_MODE;
+        } else if (msg->data == "hold_front_drive") {
+            new_mode = DriveMode::HOLD_FRONT_DRIVE;
         } else {
             RCLCPP_WARN(this->get_logger(), "Unknown drive mode: %s", msg->data.c_str());
             return;
@@ -241,18 +282,33 @@ private:
  
         if (new_mode == drive_mode_) return;  // already in this mode
  
-        // Stop all motors before switching
-        // TODO why do we have both velocity and current stop commands here?
-        // The robot could be in vertical mode, trying to keep its position without moving, so sending 0 current could make the robot fall over?
-        for (uint8_t id : active_ids_) {
-            writeDwordRegister(id, ADDR_GOAL_VELOCITY, 0);
-            writeWordRegister(id, ADDR_GOAL_CURRENT, 0);
+        // Determine if front motors need an operating mode change.
+        // Front motors are in current mode for SPLIT_MODE and HOLD_FRONT_DRIVE,
+        // and in velocity mode for ALL_VELOCITY.
+        bool old_front_current = frontNeedsCurrent(drive_mode_);
+        bool new_front_current = frontNeedsCurrent(new_mode);
+ 
+        if (old_front_current != new_front_current) {
+            // Front motor operating mode actually changes
+            uint8_t front_mode = new_front_current ? MODE_CURRENT : MODE_VELOCITY;
+            switchFrontMode(front_mode);
+        }
+ 
+        // If entering HOLD_FRONT_DRIVE, set rear velocity to 0 immediately
+        // (rear stays in velocity mode with goal=0 — actively holds position)
+        if (new_mode == DriveMode::HOLD_FRONT_DRIVE) {
+            for (uint8_t id : active_ids_) {
+                if (rear_ids_.count(id)) {
+                    writeDwordRegister(id, ADDR_GOAL_VELOCITY, 0);
+                }
+            }
         }
  
         drive_mode_ = new_mode;
-        applyDriveMode();
  
-        RCLCPP_INFO(this->get_logger(), "Drive mode changed to: %s", msg->data.c_str());
+        const char* mode_names[] = {"ALL_VELOCITY", "SPLIT_MODE", "HOLD_FRONT_DRIVE"};
+        RCLCPP_INFO(this->get_logger(), "Drive mode: %s",
+            mode_names[static_cast<int>(new_mode)]);
     }
  
     void cmdVelCallback(const geometry_msgs::msg::Twist::SharedPtr msg)
@@ -262,25 +318,42 @@ private:
         double speed = msg->linear.x;
         double clamped = std::clamp(speed, -1.0, 1.0);
  
-        // Velocity command for velocity-mode motors
+        // Pre-compute commands
         int32_t vel = static_cast<int32_t>(clamped * max_velocity_);
- 
-        // Current command for current-mode motors (proportional to velocity)
-        int16_t cur = static_cast<int16_t>(clamped * max_current_units_); // TODO whats the value of max current units, and also why do we care about units and not overall max current
+        int16_t cur = static_cast<int16_t>(clamped * max_current_units_);
  
         for (uint8_t id : active_ids_) {
             bool is_front = front_ids_.count(id) > 0;
-            bool is_reversed = reverse_ids_.count(id) > 0;
-            int sign = is_reversed ? -1 : 1;
+            bool is_rear  = rear_ids_.count(id) > 0;
+            int sign = reverse_ids_.count(id) ? -1 : 1;
  
-            if (drive_mode_ == DriveMode::SPLIT_MODE && is_front) {
-                // Front wheels: current mode (compliant torque assist)
-                int16_t motor_cur = static_cast<int16_t>(cur * sign);
-                writeWordRegister(id, ADDR_GOAL_CURRENT, motor_cur);
-            } else {
-                // Rear wheels (or all wheels in all_velocity mode): velocity mode
-                int32_t motor_vel = vel * sign;
-                writeDwordRegister(id, ADDR_GOAL_VELOCITY, motor_vel);
+            switch (drive_mode_) {
+                case DriveMode::ALL_VELOCITY:
+                    // All motors: velocity mode
+                    writeDwordRegister(id, ADDR_GOAL_VELOCITY, vel * sign);
+                    break;
+ 
+                case DriveMode::SPLIT_MODE:
+                    if (is_front) {
+                        // Front: current mode (compliant assist)
+                        writeWordRegister(id, ADDR_GOAL_CURRENT,
+                            static_cast<int16_t>(cur * sign));
+                    } else {
+                        // Rear: velocity mode (primary drive)
+                        writeDwordRegister(id, ADDR_GOAL_VELOCITY, vel * sign);
+                    }
+                    break;
+ 
+                case DriveMode::HOLD_FRONT_DRIVE:
+                    if (is_front) {
+                        // Front: current mode (joystick-controlled nudge)
+                        writeWordRegister(id, ADDR_GOAL_CURRENT,
+                            static_cast<int16_t>(cur * sign));
+                    } else if (is_rear) {
+                        // Rear: velocity = 0 (active hold, ignores joystick)
+                        writeDwordRegister(id, ADDR_GOAL_VELOCITY, 0);
+                    }
+                    break;
             }
         }
     }
@@ -355,8 +428,7 @@ private:
     rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr status_pub_;
     rclcpp::TimerBase::SharedPtr status_timer_;
 };
- 
- 
+
 int main(int argc, char** argv)
 {
     rclcpp::init(argc, argv);
@@ -364,3 +436,4 @@ int main(int argc, char** argv)
     rclcpp::spin(node);
     rclcpp::shutdown();
     return 0;
+}
