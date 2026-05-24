@@ -218,11 +218,7 @@ private:
                 RCLCPP_INFO(this->get_logger(), "Steering LEFT → %.0f°", servo_min_deg_);
             }
         }
-        // Below threshold: reset triggers so next crossing fires again
-        else {
-            steer_triggered_left_  = false;
-            steer_triggered_right_ = false;
-        }
+        // Between thresholds: do nothing, servo holds position
     }
 
     // ─── Members ──────────────────────────────────────────────────
