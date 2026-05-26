@@ -57,7 +57,7 @@ except ImportError as e:
 # The sensor is 3280x2464 (4:3). Modes that don't use the full sensor area crop from center.
 RESOLUTION_MAP = {
     # ── Full sensor (no crop) ──
-    "1640x1232 (4:3 full)":   (1640, 1232),   # Full sensor, 4:3, ~41fps
+    "3280x2464 (4:3 max)":   (1640, 1232),   # Full sensor, 4:3, ~41fps
     "3280x2464 (4:3 max)":    (3280, 2464),   # Full sensor, max res, ~21fps
     # ── Center crop (narrower FOV) ──
     "1920x1080 (16:9 crop)":  (1920, 1080),   # Center crop, 16:9, ~47fps
@@ -78,8 +78,8 @@ camera_instance = None  # Picamera2
 
 # Current config
 current_config = {
-    "resolution": "1640x1232 (4:3 full)",
-    "fps": 30,
+    "resolution": "3280x2464 (4:3 max)",
+    "fps": 20,
     # Image controls
     "brightness": 0.0,       # -1.0 to 1.0
     "contrast": 1.0,         # 0.0 to 2.0
@@ -437,9 +437,18 @@ DASHBOARD_HTML = """
       position: relative;
       width: 40px;
       height: 20px;
+      display: inline-block;
     }
     .toggle input {
-      opacity: 0; width: 0; height: 0;
+      opacity: 0;
+      width: 100%;
+      height: 100%;
+      position: absolute;
+      top: 0;
+      left: 0;
+      z-index: 2;
+      cursor: pointer;
+      margin: 0;
     }
     .toggle .slider {
       position: absolute;
@@ -448,6 +457,7 @@ DASHBOARD_HTML = """
       background: #21262d;
       border-radius: 10px;
       transition: 0.2s;
+      z-index: 1;
     }
     .toggle .slider:before {
       content: "";
@@ -504,8 +514,8 @@ DASHBOARD_HTML = """
         <div class="control-row">
           <label>Resolution</label>
           <select id="resolution" onchange="restartPipeline('resolution', this.value)">
-            <option value="1640x1232 (4:3 full)" selected>1640×1232 — 4:3 Full sensor</option>
-            <option value="3280x2464 (4:3 max)">3280×2464 — 4:3 Max res (~21fps)</option>
+            <option value="1640x1232 (4:3 full)">1640×1232 — 4:3 Binned (faster)</option>
+            <option value="3280x2464 (4:3 max)" selected>3280×2464 — 4:3 Max res (widest)</option>
             <option value="1920x1080 (16:9 crop)">1920×1080 — 16:9 Center crop</option>
             <option value="640x480 (4:3 crop)">640×480 — 4:3 Heavy crop</option>
             <option value="820x616 (4:3 scaled)">820×616 — 4:3 Scaled (low bandwidth)</option>
@@ -516,8 +526,8 @@ DASHBOARD_HTML = """
           <select id="fps" onchange="restartPipeline('fps', parseInt(this.value))">
             <option value="10">10</option>
             <option value="15">15</option>
-            <option value="24">24</option>
-            <option value="30" selected>30</option>
+            <option value="20" selected>20</option>
+            <option value="30">30</option>
           </select>
         </div>
         <div class="control-row">
@@ -811,7 +821,7 @@ def api_restart():
 def api_reset():
     """Reset all config to defaults and restart pipeline."""
     defaults = {
-        "resolution": "1640x1232 (4:3 full)", "fps": 30,
+        "resolution": "3280x2464 (4:3 max)", "fps": 30,
         "brightness": 0.0, "contrast": 1.0,
         "saturation": 1.0, "sharpness": 1.0,
         "auto_exposure": True, "exposure_time": 33000,
@@ -838,7 +848,7 @@ def parse_args():
         description="Rear Camera LAN Streaming Server (RPi V2 NoIR)")
     p.add_argument("--fps", type=int, default=30,
                    help="Target FPS (default 30)")
-    p.add_argument("--resolution", default="1640x1232 (4:3 full)",
+    p.add_argument("--resolution", default="3280x2464 (4:3 max)",
                    choices=list(RESOLUTION_MAP.keys()),
                    help="Starting resolution (default: full sensor 1640x1232)")
     p.add_argument("--port", type=int, default=8081,
