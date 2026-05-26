@@ -61,9 +61,13 @@ from rclpy.node import Node as RosNode
 # Resolution presets
 # ═════════════════════════════════════════════════════════════════
 
+# IMX378 sensor supports: 1080_P, 4_K, 12_MP natively.
+# For lower resolutions, we set 1080p sensor and scale via setVideoSize/setPreviewSize.
+# The "resolution" setting controls the preview output size for the dashboard.
+# The sensor always runs at 1080p (or 4K for recording).
 RESOLUTION_MAP = {
-    "480p":  (dai.ColorCameraProperties.SensorResolution.THE_800_P,  640,  480),
-    "720p":  (dai.ColorCameraProperties.SensorResolution.THE_800_P,  1280, 720),
+    "480p":  (dai.ColorCameraProperties.SensorResolution.THE_1080_P, 854,  480),
+    "720p":  (dai.ColorCameraProperties.SensorResolution.THE_1080_P, 1280, 720),
     "1080p": (dai.ColorCameraProperties.SensorResolution.THE_1080_P, 1920, 1080),
     "4k":    (dai.ColorCameraProperties.SensorResolution.THE_4_K,    3840, 2160),
 }
@@ -75,10 +79,26 @@ MEDIAN_MAP = {
     "KERNEL_7x7": dai.MedianFilter.KERNEL_7x7,
 }
 
-DEPTH_PRESET_MAP = {
-    "HIGH_DENSITY":  dai.node.StereoDepth.PresetMode.HIGH_DENSITY,
-    "HIGH_ACCURACY": dai.node.StereoDepth.PresetMode.HIGH_ACCURACY,
-}
+# depthai v2 uses HIGH_DENSITY/HIGH_ACCURACY, v3 uses FAST_DENSITY/FAST_ACCURACY
+_pm = dai.node.StereoDepth.PresetMode
+if hasattr(_pm, "HIGH_DENSITY"):
+    # depthai v2
+    DEPTH_PRESET_MAP = {
+        "HIGH_DENSITY":  _pm.HIGH_DENSITY,
+        "HIGH_ACCURACY": _pm.HIGH_ACCURACY,
+    }
+    _DEFAULT_DEPTH_PRESET = _pm.HIGH_DENSITY
+elif hasattr(_pm, "FAST_DENSITY"):
+    # depthai v3
+    DEPTH_PRESET_MAP = {
+        "HIGH_DENSITY":  _pm.FAST_DENSITY,
+        "HIGH_ACCURACY": _pm.FAST_ACCURACY,
+    }
+    _DEFAULT_DEPTH_PRESET = _pm.FAST_DENSITY
+else:
+    # Fallback: try first available
+    DEPTH_PRESET_MAP = {}
+    _DEFAULT_DEPTH_PRESET = list(_pm.__members__.values())[0]
 
 
 # ═════════════════════════════════════════════════════════════════
@@ -102,6 +122,7 @@ recording_file = None
 # Pipeline control
 pipeline_stop = threading.Event()
 pipeline_restart = threading.Event()
+controls_dirty = threading.Event()  # Set when dashboard changes a live control
 
 
 # ═════════════════════════════════════════════════════════════════
@@ -163,8 +184,13 @@ current_config = {
 # ═════════════════════════════════════════════════════════════════
 
 def build_pipeline(cfg):
-    """Build a DepthAI pipeline with RGB + depth + H.265 encoder."""
+    """Build a DepthAI pipeline with RGB + depth + H.265 encoder.
+
+    Returns (pipeline, queues_dict) where queues_dict has the output/input
+    queues created directly on the node outputs (v3 API).
+    """
     pipeline = dai.Pipeline()
+    queues = {}
 
     res_key = cfg["resolution"]
     sensor_res, vid_w, vid_h = RESOLUTION_MAP.get(res_key, RESOLUTION_MAP["1080p"])
@@ -182,15 +208,11 @@ def build_pipeline(cfg):
     cam_rgb.setInterleaved(False)
     cam_rgb.setColorOrder(dai.ColorCameraProperties.ColorOrder.BGR)
 
-    # Preview output → dashboard MJPEG + ROS2 image topic
-    xout_preview = pipeline.create(dai.node.XLinkOut)
-    xout_preview.setStreamName("preview")
-    cam_rgb.preview.link(xout_preview.input)
+    # v3: create output queues directly on node outputs
+    queues["preview"] = cam_rgb.preview.createOutputQueue()
 
-    # Camera control input
-    ctrl_in = pipeline.create(dai.node.XLinkIn)
-    ctrl_in.setStreamName("cam_ctrl")
-    ctrl_in.out.link(cam_rgb.inputControl)
+    # v3: camera control input queue directly on inputControl
+    queues["cam_ctrl"] = cam_rgb.inputControl.createInputQueue()
 
     # ── Hardware H.265 encoder (on Myriad X, zero CPU cost) ──
     h265_enc = pipeline.create(dai.node.VideoEncoder)
@@ -200,26 +222,22 @@ def build_pipeline(cfg):
     h265_enc.setKeyframeFrequency(cfg["h265_keyframe_interval"])
 
     cam_rgb.video.link(h265_enc.input)
-
-    xout_h265 = pipeline.create(dai.node.XLinkOut)
-    xout_h265.setStreamName("h265")
-    h265_enc.bitstream.link(xout_h265.input)
+    queues["h265"] = h265_enc.bitstream.createOutputQueue()
 
     # ── Stereo depth ──
     if cfg["enable_depth"]:
         mono_left = pipeline.create(dai.node.MonoCamera)
-        mono_left.setCamera("left")
+        mono_left.setBoardSocket(dai.CameraBoardSocket.CAM_B)
         mono_left.setResolution(dai.MonoCameraProperties.SensorResolution.THE_400_P)
         mono_left.setFps(fps)
 
         mono_right = pipeline.create(dai.node.MonoCamera)
-        mono_right.setCamera("right")
+        mono_right.setBoardSocket(dai.CameraBoardSocket.CAM_C)
         mono_right.setResolution(dai.MonoCameraProperties.SensorResolution.THE_400_P)
         mono_right.setFps(fps)
 
         stereo = pipeline.create(dai.node.StereoDepth)
-        preset = DEPTH_PRESET_MAP.get(cfg["depth_preset"],
-                                      dai.node.StereoDepth.PresetMode.HIGH_DENSITY)
+        preset = DEPTH_PRESET_MAP.get(cfg["depth_preset"], _DEFAULT_DEPTH_PRESET)
         stereo.setDefaultProfilePreset(preset)
         stereo.setLeftRightCheck(cfg["lr_check"])
         stereo.setExtendedDisparity(cfg["extended_disparity"])
@@ -231,11 +249,9 @@ def build_pipeline(cfg):
         mono_left.out.link(stereo.left)
         mono_right.out.link(stereo.right)
 
-        xout_depth = pipeline.create(dai.node.XLinkOut)
-        xout_depth.setStreamName("depth")
-        stereo.disparity.link(xout_depth.input)
+        queues["depth"] = stereo.disparity.createOutputQueue()
 
-    return pipeline
+    return pipeline, queues
 
 
 # ═════════════════════════════════════════════════════════════════
@@ -243,60 +259,82 @@ def build_pipeline(cfg):
 # ═════════════════════════════════════════════════════════════════
 
 def apply_camera_controls(queue, cfg):
-    """Send camera controls to the running pipeline."""
+    """Send camera controls to the running pipeline.
+
+    Each control type gets its own CameraControl message to avoid
+    conflicts (e.g. setting auto + manual exposure in one message).
+    """
     if queue is None:
         return
 
-    ctrl = dai.CameraControl()
-
-    # Exposure
-    if cfg["auto_exposure"]:
-        ctrl.setAutoExposureEnable()
-    else:
-        ctrl.setManualExposure(int(cfg["exposure_us"]), int(cfg["iso"]))
-
-    # Focus
-    if cfg["auto_focus"]:
-        mode_map = {
-            "continuous": dai.CameraControl.AutoFocusMode.CONTINUOUS_VIDEO,
-            "auto":       dai.CameraControl.AutoFocusMode.AUTO,
-            "macro":      dai.CameraControl.AutoFocusMode.MACRO,
-        }
-        af_mode = mode_map.get(cfg["autofocus_mode"],
-                               dai.CameraControl.AutoFocusMode.CONTINUOUS_VIDEO)
-        ctrl.setAutoFocusMode(af_mode)
-    else:
-        ctrl.setManualFocus(int(cfg["manual_focus"]))
-
-    # White balance
-    if cfg["auto_white_balance"]:
-        ctrl.setAutoWhiteBalanceMode(dai.CameraControl.AutoWhiteBalanceMode.AUTO)
-    else:
-        ctrl.setManualWhiteBalance(int(cfg["white_balance_k"]))
-
-    # Image adjustments
-    ctrl.setBrightness(int(cfg["brightness"]))
-    ctrl.setContrast(int(cfg["contrast"]))
-    ctrl.setSaturation(int(cfg["saturation"]))
-    ctrl.setSharpness(int(cfg["sharpness"]))
-    ctrl.setLumaDenoise(int(cfg["luma_denoise"]))
-    ctrl.setChromaDenoise(int(cfg["chroma_denoise"]))
-
     try:
+        # Exposure
+        ctrl = dai.CameraControl()
+        if cfg["auto_exposure"]:
+            ctrl.setAutoExposureEnable()
+        else:
+            ctrl.setManualExposure(int(cfg["exposure_us"]), int(cfg["iso"]))
         queue.send(ctrl)
+
+        # White balance
+        ctrl = dai.CameraControl()
+        if cfg["auto_white_balance"]:
+            ctrl.setAutoWhiteBalanceMode(dai.CameraControl.AutoWhiteBalanceMode.AUTO)
+        else:
+            ctrl.setManualWhiteBalance(int(cfg["white_balance_k"]))
+        queue.send(ctrl)
+
+        # Image adjustments (all safe to combine)
+        ctrl = dai.CameraControl()
+        ctrl.setBrightness(int(cfg["brightness"]))
+        ctrl.setContrast(int(cfg["contrast"]))
+        ctrl.setSaturation(int(cfg["saturation"]))
+        ctrl.setSharpness(int(cfg["sharpness"]))
+        ctrl.setLumaDenoise(int(cfg["luma_denoise"]))
+        ctrl.setChromaDenoise(int(cfg["chroma_denoise"]))
+        queue.send(ctrl)
+
     except Exception as e:
         print(f"  [warn] Failed to send camera control: {e}")
 
 
+_ir_warned = False
+
 def apply_ir_controls(device, cfg):
     """Set IR dot projector and flood light brightness."""
+    global _ir_warned
     if device is None:
         return
+
+    dot = float(cfg["ir_dot_brightness"])
+    flood = float(cfg["ir_flood_brightness"])
+
+    # Skip if both are zero (default) to avoid unnecessary calls
+    if dot == 0.0 and flood == 0.0:
+        return
+
     try:
-        device.setIrLaserDotProjectorBrightness(float(cfg["ir_dot_brightness"]))
-        device.setIrFloodLightBrightness(float(cfg["ir_flood_brightness"]))
+        # v2 API uses float 0.0-1.0, mapped to mA internally
+        # v3 API uses mA directly (int): dot up to 765, flood up to 1500
+        # We accept 0.0-1.0 from dashboard and convert to mA
+        dot_ma = int(dot * 765)
+        flood_ma = int(flood * 1500)
+
+        if hasattr(device, 'setIrLaserDotProjectorBrightness'):
+            device.setIrLaserDotProjectorBrightness(dot_ma)
+            device.setIrFloodLightBrightness(flood_ma)
+        elif hasattr(device, 'setIrLaserDotProjectorIntensity'):
+            device.setIrLaserDotProjectorIntensity(dot)
+            device.setIrFloodLightIntensity(flood)
+        else:
+            if not _ir_warned:
+                print("  [warn] IR control methods not found on device. "
+                      "IR controls disabled.")
+                _ir_warned = True
     except Exception as e:
-        print(f"  [warn] IR control failed: {e}")
+        if not _ir_warned:
+            print(f"  [warn] IR control failed: {e}")
+            _ir_warned = True
 
 
 # ═════════════════════════════════════════════════════════════════
@@ -325,140 +363,161 @@ def pipeline_worker(ros_node):
         ros_node.get_logger().info(
             f"Starting pipeline: {cfg['resolution']} @ {cfg['fps']}fps")
 
+        pipeline = None
         try:
-            pipeline = build_pipeline(cfg)
+            pipeline, queues = build_pipeline(cfg)
 
-            with dai.Device(pipeline) as device:
-                device_ref = device
+            # v3: start pipeline (replaces dai.Device context manager)
+            pipeline.start()
+            # v3: get device reference for IR controls
+            # Try different methods depending on depthai version
+            if hasattr(pipeline, 'getDefaultDevice'):
+                device_ref = pipeline.getDefaultDevice()
+            elif hasattr(pipeline, 'getDevices'):
+                devs = pipeline.getDevices()
+                device_ref = devs[0] if devs else None
+            else:
+                # v3 may not expose device directly from pipeline
+                # Try dai.Device.getAllAvailableDevices() and open separately
+                device_ref = None
+                ros_node.get_logger().warn(
+                    "Could not get device ref from pipeline. "
+                    "IR controls may not work.")
 
-                # Camera control queue
-                ctrl_queue = device.getInputQueue("cam_ctrl")
+            # Get queues from build_pipeline
+            q_preview = queues["preview"]
+            q_h265 = queues["h265"]
+            ctrl_queue = queues["cam_ctrl"]
+            q_depth = queues.get("depth")
 
-                # Output queues
-                q_preview = device.getOutputQueue("preview", maxSize=4, blocking=False)
-                q_h265 = device.getOutputQueue("h265", maxSize=30, blocking=False)
-                q_depth = None
-                if cfg["enable_depth"]:
-                    q_depth = device.getOutputQueue("depth", maxSize=4, blocking=False)
+            # Apply initial controls
+            time.sleep(0.5)
+            apply_camera_controls(ctrl_queue, cfg)
+            apply_ir_controls(device_ref, cfg)
 
-                # Apply initial controls
-                time.sleep(0.5)
-                apply_camera_controls(ctrl_queue, cfg)
-                apply_ir_controls(device, cfg)
+            # FPS tracking
+            fps_counter = 0
+            fps_time = time.time()
+            fps_display = 0.0
 
-                # FPS tracking
-                fps_counter = 0
-                fps_time = time.time()
-                fps_display = 0.0
+            # Depth colormap scaling
+            max_disparity = 95  # default for 400p mono
+            if cfg["extended_disparity"]:
+                max_disparity *= 2
+            if cfg["subpixel"]:
+                max_disparity *= 32  # subpixel is 5 bits
 
-                # Depth colormap scaling
-                max_disparity = 95  # default for 400p mono
-                if cfg["extended_disparity"]:
-                    max_disparity *= 2
-                if cfg["subpixel"]:
-                    max_disparity *= 32  # subpixel is 5 bits
+            ros_node.get_logger().info("Pipeline running. Dashboard ready.")
 
-                ros_node.get_logger().info("Pipeline running. Dashboard ready.")
+            while (not pipeline_stop.is_set()
+                   and not pipeline_restart.is_set()
+                   and pipeline.isRunning()):
 
-                while (not pipeline_stop.is_set()
-                       and not pipeline_restart.is_set()):
+                # ── Preview frame (dashboard + ROS2) ──
+                preview_pkt = q_preview.tryGet()
+                if preview_pkt is not None:
+                    frame_bgr = preview_pkt.getCvFrame()
 
-                    # ── Preview frame (dashboard + ROS2) ──
-                    preview_pkt = q_preview.tryGet()
-                    if preview_pkt is not None:
-                        frame_bgr = preview_pkt.getCvFrame()
+                    # FPS
+                    fps_counter += 1
+                    elapsed = time.time() - fps_time
+                    if elapsed >= 1.0:
+                        fps_display = fps_counter / elapsed
+                        fps_counter = 0
+                        fps_time = time.time()
 
-                        # FPS
-                        fps_counter += 1
-                        elapsed = time.time() - fps_time
-                        if elapsed >= 1.0:
-                            fps_display = fps_counter / elapsed
-                            fps_counter = 0
-                            fps_time = time.time()
+                    # Overlays
+                    with config_lock:
+                        ov = dict(current_config)
 
-                        # Overlays
-                        with config_lock:
-                            ov = dict(current_config)
+                    if ov["show_fps"]:
+                        cv2.putText(frame_bgr, f"FPS: {fps_display:.1f}",
+                                    (10, 25), cv2.FONT_HERSHEY_SIMPLEX,
+                                    0.7, (0, 255, 0), 2)
 
-                        if ov["show_fps"]:
-                            cv2.putText(frame_bgr, f"FPS: {fps_display:.1f}",
-                                        (10, 25), cv2.FONT_HERSHEY_SIMPLEX,
-                                        0.7, (0, 255, 0), 2)
+                    if ov["show_timestamp"]:
+                        ts = time.strftime("%Y-%m-%d %H:%M:%S")
+                        h = frame_bgr.shape[0]
+                        cv2.putText(frame_bgr, ts,
+                                    (10, h - 10), cv2.FONT_HERSHEY_SIMPLEX,
+                                    0.5, (200, 200, 200), 1)
 
-                        if ov["show_timestamp"]:
-                            ts = time.strftime("%Y-%m-%d %H:%M:%S")
-                            h = frame_bgr.shape[0]
-                            cv2.putText(frame_bgr, ts,
-                                        (10, h - 10), cv2.FONT_HERSHEY_SIMPLEX,
-                                        0.5, (200, 200, 200), 1)
+                    with frame_lock:
+                        current_frames["rgb"] = frame_bgr
 
+                    # ─────────────────────────────────────
+                    # [FUTURE] Publish to ROS2 image topics
+                    # ─────────────────────────────────────
+                    # if rgb_pub.get_subscription_count() > 0:
+                    #     msg = bridge.cv2_to_imgmsg(frame_bgr, encoding="bgr8")
+                    #     msg.header.stamp = ros_node.get_clock().now().to_msg()
+                    #     msg.header.frame_id = "oakd_rgb_optical_frame"
+                    #     rgb_pub.publish(msg)
+                    #
+                    # if compressed_pub.get_subscription_count() > 0:
+                    #     comp_msg = CompressedImage()
+                    #     comp_msg.header.stamp = ros_node.get_clock().now().to_msg()
+                    #     comp_msg.header.frame_id = "oakd_rgb_optical_frame"
+                    #     comp_msg.format = "jpeg"
+                    #     _, buf = cv2.imencode('.jpg', frame_bgr,
+                    #                          [cv2.IMWRITE_JPEG_QUALITY, 80])
+                    #     comp_msg.data = buf.tobytes()
+                    #     compressed_pub.publish(comp_msg)
+
+                # ── Depth frame ──
+                if q_depth is not None:
+                    depth_pkt = q_depth.tryGet()
+                    if depth_pkt is not None:
+                        disp = depth_pkt.getFrame()
+                        disp_norm = (disp * 255.0 / max_disparity).astype(np.uint8)
+                        disp_color = cv2.applyColorMap(disp_norm,
+                                                       cv2.COLORMAP_JET)
                         with frame_lock:
-                            current_frames["rgb"] = frame_bgr
+                            current_frames["depth"] = disp_color
 
-                        # ─────────────────────────────────────
-                        # [FUTURE] Publish to ROS2 image topics
-                        # ─────────────────────────────────────
-                        # if rgb_pub.get_subscription_count() > 0:
-                        #     msg = bridge.cv2_to_imgmsg(frame_bgr, encoding="bgr8")
-                        #     msg.header.stamp = ros_node.get_clock().now().to_msg()
-                        #     msg.header.frame_id = "oakd_rgb_optical_frame"
-                        #     rgb_pub.publish(msg)
-                        #
-                        # if compressed_pub.get_subscription_count() > 0:
-                        #     comp_msg = CompressedImage()
-                        #     comp_msg.header.stamp = ros_node.get_clock().now().to_msg()
-                        #     comp_msg.header.frame_id = "oakd_rgb_optical_frame"
-                        #     comp_msg.format = "jpeg"
-                        #     _, buf = cv2.imencode('.jpg', frame_bgr,
-                        #                          [cv2.IMWRITE_JPEG_QUALITY, 80])
-                        #     comp_msg.data = buf.tobytes()
-                        #     compressed_pub.publish(comp_msg)
+                        # ─────────────────────────────────
+                        # [FUTURE] Publish depth to ROS2
+                        # ─────────────────────────────────
+                        # if depth_pub.get_subscription_count() > 0:
+                        #     depth_msg = bridge.cv2_to_imgmsg(
+                        #         disp, encoding="mono16")
+                        #     depth_msg.header.stamp = (
+                        #         ros_node.get_clock().now().to_msg())
+                        #     depth_msg.header.frame_id = (
+                        #         "oakd_stereo_optical_frame")
+                        #     depth_pub.publish(depth_msg)
 
-                    # ── Depth frame ──
-                    if q_depth is not None:
-                        depth_pkt = q_depth.tryGet()
-                        if depth_pkt is not None:
-                            disp = depth_pkt.getFrame()
-                            disp_norm = (disp * 255.0 / max_disparity).astype(np.uint8)
-                            disp_color = cv2.applyColorMap(disp_norm,
-                                                           cv2.COLORMAP_JET)
-                            with frame_lock:
-                                current_frames["depth"] = disp_color
+                # ── H.265 encoded stream ──
+                h265_pkt = q_h265.tryGet()
+                if h265_pkt is not None:
+                    with recording_lock:
+                        if recording_active and recording_file:
+                            recording_file.write(h265_pkt.getData())
 
-                            # ─────────────────────────────────
-                            # [FUTURE] Publish depth to ROS2
-                            # ─────────────────────────────────
-                            # if depth_pub.get_subscription_count() > 0:
-                            #     depth_msg = bridge.cv2_to_imgmsg(
-                            #         disp, encoding="mono16")
-                            #     depth_msg.header.stamp = (
-                            #         ros_node.get_clock().now().to_msg())
-                            #     depth_msg.header.frame_id = (
-                            #         "oakd_stereo_optical_frame")
-                            #     depth_pub.publish(depth_msg)
-
-                    # ── H.265 encoded stream ──
-                    h265_pkt = q_h265.tryGet()
-                    if h265_pkt is not None:
-                        with recording_lock:
-                            if recording_active and recording_file:
-                                recording_file.write(h265_pkt.getData())
-
-                    # Live control updates (no restart needed)
+                # Live control updates (only when dashboard changes something)
+                if controls_dirty.is_set():
+                    controls_dirty.clear()
                     with config_lock:
                         live_cfg = dict(current_config)
                     apply_camera_controls(ctrl_queue, live_cfg)
-                    apply_ir_controls(device, live_cfg)
+                    apply_ir_controls(device_ref, live_cfg)
 
-                    time.sleep(0.001)
+                time.sleep(0.001)
 
         except Exception as e:
             ros_node.get_logger().error(f"Pipeline error: {e}")
+            import traceback
+            traceback.print_exc()
             time.sleep(2)
 
         finally:
             device_ref = None
             ctrl_queue = None
+            if pipeline is not None:
+                try:
+                    pipeline.stop()
+                except Exception:
+                    pass
             with recording_lock:
                 if recording_file:
                     recording_file.close()
@@ -646,10 +705,9 @@ DASHBOARD_HTML = """
         <div class="control-row">
           <label>Resolution</label>
           <select id="resolution" onchange="restartPipeline('resolution', this.value)">
-            <option value="480p">480p</option>
+            <option value="480p">480p (cropped)</option>
             <option value="720p">720p</option>
-            <option value="1080p" selected>1080p</option>
-            <option value="4k">4K</option>
+            <option value="1080p" selected>1080p (native)</option>
           </select>
         </div>
         <div class="control-row">
@@ -703,32 +761,7 @@ DASHBOARD_HTML = """
         </div>
       </div>
 
-      <!-- FOCUS -->
-      <div class="section">
-        <div class="section-title">Focus</div>
-        <div class="toggle-row">
-          <label>Auto Focus</label>
-          <div class="toggle">
-            <input type="checkbox" id="auto_focus" checked
-                   onchange="setControl('auto_focus', this.checked)">
-            <span class="slider"></span>
-          </div>
-        </div>
-        <div class="control-row">
-          <label>AF Mode</label>
-          <select onchange="setControl('autofocus_mode', this.value)">
-            <option value="continuous" selected>Continuous</option>
-            <option value="auto">Auto (trigger)</option>
-            <option value="macro">Macro</option>
-          </select>
-        </div>
-        <div class="control-row">
-          <label>Manual Focus</label>
-          <input type="range" min="0" max="255" value="127"
-                 oninput="setControl('manual_focus', parseInt(this.value), this)">
-          <span class="val" id="val_manual_focus">127</span>
-        </div>
-      </div>
+      <!-- FOCUS: Removed — OAK-D Pro FF is fixed focus, no AF motor -->
 
       <!-- WHITE BALANCE -->
       <div class="section">
@@ -885,16 +918,25 @@ DASHBOARD_HTML = """
   </div>
 
   <script>
+    let _controlTimer = null;
     function setControl(key, value, el) {
       const valSpan = document.getElementById('val_' + key);
       if (valSpan) valSpan.textContent = typeof value === 'number' ?
         (Number.isInteger(value) ? value : value.toFixed(2)) : value;
 
-      fetch('/api/controls', {
+      const send = () => fetch('/api/controls', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({[key]: value})
       });
+
+      // Booleans (toggles) send immediately; sliders debounce
+      if (typeof value === 'boolean') {
+        send();
+      } else {
+        clearTimeout(_controlTimer);
+        _controlTimer = setTimeout(send, 150);
+      }
     }
 
     function restartPipeline(key, value) {
@@ -1023,17 +1065,20 @@ def api_controls():
     data = request.get_json(force=True)
     live_keys = {
         "auto_exposure", "exposure_us", "iso",
-        "auto_focus", "autofocus_mode", "manual_focus",
         "auto_white_balance", "white_balance_k",
         "brightness", "contrast", "saturation", "sharpness",
         "luma_denoise", "chroma_denoise",
         "ir_dot_brightness", "ir_flood_brightness",
         "show_fps", "show_timestamp", "jpeg_quality",
     }
+    changed = False
     with config_lock:
         for key, value in data.items():
             if key in live_keys:
                 current_config[key] = value
+                changed = True
+    if changed:
+        controls_dirty.set()
     return jsonify({"ok": True})
 
 
