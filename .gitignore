@@ -2,3 +2,11 @@ build/
 install/
 log/
 .colcon/
+.cache/
+core.*
+__pycache__/
+*.pyc
+tests/.cache/
+tests/test_dynamixel
+tests/test_u2d2_link
+recordings/

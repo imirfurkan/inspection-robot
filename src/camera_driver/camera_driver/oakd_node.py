@@ -1,23 +1,14 @@
 #!/usr/bin/env python3
 """
-OAK-D Pro Camera Node (ROS2 + Flask Dashboard + H.265 HW Encoding)
+OAK-D Pro Camera Node (ROS2 + DepthAI Pipeline + H.265 HW Encoding)
 =====================================================================
 Owns the DepthAI pipeline directly for full parameter control.
+The Flask dashboard runs in dashboard/server.py.
 
 Three simultaneous outputs from the same pipeline:
-  1. Preview (low-res)  → Flask MJPEG dashboard for operator
-  2. Video (high-res)   → Hardware H.265 encoder on Myriad X → disk recording
-  3. Stereo depth       → Colorized depth map → dashboard
-
-Dashboard: http://<rpi-ip>:8080/
-
-ROS2 topics (commented out, uncomment for SLAM/autonomy):
-  /camera/front/rgb              sensor_msgs/Image
-  /camera/front/depth            sensor_msgs/Image
-  /camera/front/rgb/compressed   sensor_msgs/CompressedImage
-
-Prerequisites (inside Docker):
-  pip install depthai opencv-python flask --break-system-packages
+  1. Preview (low-res)  → shared frame buffer → dashboard MJPEG
+  2. Video (high-res)   → hardware H.265 encoder → disk recording
+  3. Stereo depth       → colorized depth map → dashboard
 
 Usage:
   ros2 launch camera_driver oakd.launch.py
@@ -26,9 +17,8 @@ Usage:
 
 import threading
 import time
-import os
+import subprocess
 import sys
-from datetime import datetime
 
 import cv2
 import numpy as np
@@ -40,15 +30,18 @@ except ImportError:
     print("  pip install depthai --break-system-packages")
     sys.exit(1)
 
-try:
-    from flask import Flask, Response, jsonify, request, render_template_string
-except ImportError:
-    print("  [ERROR] flask not installed.")
-    print("  pip install flask --break-system-packages")
-    sys.exit(1)
-
 import rclpy
 from rclpy.node import Node as RosNode
+
+from camera_driver.shared_state import (
+    frame_lock, current_frames,
+    config_lock, current_config,
+    recording_lock,
+    pipeline_stop, pipeline_restart, controls_dirty,
+)
+import camera_driver.shared_state as state
+
+from camera_driver.dashboard.server import run_server
 
 # ─────────────────────────────────────────────────────────────────
 # [FUTURE] Uncomment when SLAM / autonomy nodes need camera data
@@ -57,19 +50,16 @@ from rclpy.node import Node as RosNode
 # from cv_bridge import CvBridge
 
 
-# ═════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════
 # Resolution presets
-# ═════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════
 
 # IMX378 sensor supports: 1080_P, 4_K, 12_MP natively.
 # For lower resolutions, we set 1080p sensor and scale via setVideoSize/setPreviewSize.
-# The "resolution" setting controls the preview output size for the dashboard.
-# The sensor always runs at 1080p (or 4K for recording).
 RESOLUTION_MAP = {
     "480p":  (dai.ColorCameraProperties.SensorResolution.THE_1080_P, 854,  480),
     "720p":  (dai.ColorCameraProperties.SensorResolution.THE_1080_P, 1280, 720),
     "1080p": (dai.ColorCameraProperties.SensorResolution.THE_1080_P, 1920, 1080),
-    "4k":    (dai.ColorCameraProperties.SensorResolution.THE_4_K,    3840, 2160),
 }
 
 MEDIAN_MAP = {
@@ -82,113 +72,28 @@ MEDIAN_MAP = {
 # depthai v2 uses HIGH_DENSITY/HIGH_ACCURACY, v3 uses FAST_DENSITY/FAST_ACCURACY
 _pm = dai.node.StereoDepth.PresetMode
 if hasattr(_pm, "HIGH_DENSITY"):
-    # depthai v2
     DEPTH_PRESET_MAP = {
         "HIGH_DENSITY":  _pm.HIGH_DENSITY,
         "HIGH_ACCURACY": _pm.HIGH_ACCURACY,
     }
     _DEFAULT_DEPTH_PRESET = _pm.HIGH_DENSITY
 elif hasattr(_pm, "FAST_DENSITY"):
-    # depthai v3
     DEPTH_PRESET_MAP = {
         "HIGH_DENSITY":  _pm.FAST_DENSITY,
         "HIGH_ACCURACY": _pm.FAST_ACCURACY,
     }
     _DEFAULT_DEPTH_PRESET = _pm.FAST_DENSITY
 else:
-    # Fallback: try first available
     DEPTH_PRESET_MAP = {}
     _DEFAULT_DEPTH_PRESET = list(_pm.__members__.values())[0]
 
 
-# ═════════════════════════════════════════════════════════════════
-# Shared state
-# ═════════════════════════════════════════════════════════════════
-
-frame_lock = threading.Lock()
-current_frames = {
-    "rgb": None,
-    "depth": None,
-}
-
-device_ref = None
-ctrl_queue = None
-
-# Recording state
-recording_lock = threading.Lock()
-recording_active = False
-recording_file = None
-
-# Pipeline control
-pipeline_stop = threading.Event()
-pipeline_restart = threading.Event()
-controls_dirty = threading.Event()  # Set when dashboard changes a live control
-
-
-# ═════════════════════════════════════════════════════════════════
-# Current config (modified by dashboard, read by pipeline)
-# ═════════════════════════════════════════════════════════════════
-
-config_lock = threading.Lock()
-current_config = {
-    # Stream
-    "resolution": "1080p",
-    "fps": 30,
-    "preview_width": 640,
-    "preview_height": 360,
-    # Dashboard
-    "dashboard_port": 8080,
-    "jpeg_quality": 80,
-    # H.265 recording
-    "enable_h265_recording": False,
-    "h265_bitrate_kbps": 3000,
-    "h265_keyframe_interval": 30,
-    "recording_dir": "/home/admin/recordings",
-    # Exposure
-    "auto_exposure": True,
-    "exposure_us": 8333,
-    "iso": 400,
-    # Focus
-    "auto_focus": True,
-    "autofocus_mode": "continuous",
-    "manual_focus": 127,
-    # White balance
-    "auto_white_balance": True,
-    "white_balance_k": 5500,
-    # Image
-    "brightness": 0,
-    "contrast": 0,
-    "saturation": 0,
-    "sharpness": 1,
-    "luma_denoise": 1,
-    "chroma_denoise": 1,
-    # IR
-    "ir_dot_brightness": 0.0,
-    "ir_flood_brightness": 0.0,
-    # Depth
-    "enable_depth": True,
-    "depth_preset": "HIGH_DENSITY",
-    "lr_check": True,
-    "extended_disparity": False,
-    "subpixel": False,
-    "confidence_threshold": 200,
-    "median_filter": "KERNEL_7x7",
-    # Overlay
-    "show_fps": True,
-    "show_timestamp": False,
-}
-
-
-# ═════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════
 # DepthAI pipeline builder
-# ═════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════
 
 def build_pipeline(cfg):
-    """Build a DepthAI pipeline with RGB + depth + H.265 encoder.
-
-    Returns (pipeline, queues_dict) where queues_dict has the output/input
-    queues created directly on the node outputs (v3 API).
-    """
+    """Build a DepthAI pipeline with RGB + depth + H.265 encoder."""
     pipeline = dai.Pipeline()
     queues = {}
 
@@ -208,13 +113,10 @@ def build_pipeline(cfg):
     cam_rgb.setInterleaved(False)
     cam_rgb.setColorOrder(dai.ColorCameraProperties.ColorOrder.BGR)
 
-    # v3: create output queues directly on node outputs
     queues["preview"] = cam_rgb.preview.createOutputQueue()
-
-    # v3: camera control input queue directly on inputControl
     queues["cam_ctrl"] = cam_rgb.inputControl.createInputQueue()
 
-    # ── Hardware H.265 encoder (on Myriad X, zero CPU cost) ──
+    # ── Hardware H.265 encoder ──
     h265_enc = pipeline.create(dai.node.VideoEncoder)
     h265_enc.setDefaultProfilePreset(fps, dai.VideoEncoderProperties.Profile.H265_MAIN)
     if cfg["h265_bitrate_kbps"] > 0:
@@ -254,16 +156,12 @@ def build_pipeline(cfg):
     return pipeline, queues
 
 
-# ═════════════════════════════════════════════════════════════════
-# Camera controls (applied live without pipeline restart)
-# ═════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════
+# Camera controls
+# ═══════════════════════════════════════════════════════
 
 def apply_camera_controls(queue, cfg):
-    """Send camera controls to the running pipeline.
-
-    Each control type gets its own CameraControl message to avoid
-    conflicts (e.g. setting auto + manual exposure in one message).
-    """
+    """Send camera controls to the running pipeline."""
     if queue is None:
         return
 
@@ -284,7 +182,7 @@ def apply_camera_controls(queue, cfg):
             ctrl.setManualWhiteBalance(int(cfg["white_balance_k"]))
         queue.send(ctrl)
 
-        # Image adjustments (all safe to combine)
+        # Image adjustments
         ctrl = dai.CameraControl()
         ctrl.setBrightness(int(cfg["brightness"]))
         ctrl.setContrast(int(cfg["contrast"]))
@@ -309,14 +207,10 @@ def apply_ir_controls(device, cfg):
     dot = float(cfg["ir_dot_brightness"])
     flood = float(cfg["ir_flood_brightness"])
 
-    # Skip if both are zero (default) to avoid unnecessary calls
     if dot == 0.0 and flood == 0.0:
         return
 
     try:
-        # v2 API uses float 0.0-1.0, mapped to mA internally
-        # v3 API uses mA directly (int): dot up to 765, flood up to 1500
-        # We accept 0.0-1.0 from dashboard and convert to mA
         dot_ma = int(dot * 765)
         flood_ma = int(flood * 1500)
 
@@ -328,8 +222,7 @@ def apply_ir_controls(device, cfg):
             device.setIrFloodLightIntensity(flood)
         else:
             if not _ir_warned:
-                print("  [warn] IR control methods not found on device. "
-                      "IR controls disabled.")
+                print("  [warn] IR control methods not found. IR controls disabled.")
                 _ir_warned = True
     except Exception as e:
         if not _ir_warned:
@@ -337,17 +230,14 @@ def apply_ir_controls(device, cfg):
             _ir_warned = True
 
 
-# ═════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════
 # Pipeline worker thread
-# ═════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════
 
 def pipeline_worker(ros_node):
     """Runs the DepthAI pipeline and updates shared frame buffers."""
-    global device_ref, ctrl_queue, recording_active, recording_file
 
-    # ─────────────────────────────────────────────
     # [FUTURE] Uncomment for ROS2 image publishing
-    # ─────────────────────────────────────────────
     # bridge = CvBridge()
     # rgb_pub = ros_node.create_publisher(Image, '/camera/front/rgb', 10)
     # depth_pub = ros_node.create_publisher(Image, '/camera/front/depth', 10)
@@ -366,34 +256,28 @@ def pipeline_worker(ros_node):
         pipeline = None
         try:
             pipeline, queues = build_pipeline(cfg)
-
-            # v3: start pipeline (replaces dai.Device context manager)
             pipeline.start()
-            # v3: get device reference for IR controls
-            # Try different methods depending on depthai version
+
+            # Get device reference for IR controls
             if hasattr(pipeline, 'getDefaultDevice'):
-                device_ref = pipeline.getDefaultDevice()
+                state.device_ref = pipeline.getDefaultDevice()
             elif hasattr(pipeline, 'getDevices'):
                 devs = pipeline.getDevices()
-                device_ref = devs[0] if devs else None
+                state.device_ref = devs[0] if devs else None
             else:
-                # v3 may not expose device directly from pipeline
-                # Try dai.Device.getAllAvailableDevices() and open separately
-                device_ref = None
+                state.device_ref = None
                 ros_node.get_logger().warn(
-                    "Could not get device ref from pipeline. "
-                    "IR controls may not work.")
+                    "Could not get device ref. IR controls may not work.")
 
-            # Get queues from build_pipeline
             q_preview = queues["preview"]
             q_h265 = queues["h265"]
-            ctrl_queue = queues["cam_ctrl"]
+            state.ctrl_queue = queues["cam_ctrl"]
             q_depth = queues.get("depth")
 
             # Apply initial controls
             time.sleep(0.5)
-            apply_camera_controls(ctrl_queue, cfg)
-            apply_ir_controls(device_ref, cfg)
+            apply_camera_controls(state.ctrl_queue, cfg)
+            apply_ir_controls(state.device_ref, cfg)
 
             # FPS tracking
             fps_counter = 0
@@ -401,11 +285,11 @@ def pipeline_worker(ros_node):
             fps_display = 0.0
 
             # Depth colormap scaling
-            max_disparity = 95  # default for 400p mono
+            max_disparity = 95
             if cfg["extended_disparity"]:
                 max_disparity *= 2
             if cfg["subpixel"]:
-                max_disparity *= 32  # subpixel is 5 bits
+                max_disparity *= 32
 
             ros_node.get_logger().info("Pipeline running. Dashboard ready.")
 
@@ -413,12 +297,11 @@ def pipeline_worker(ros_node):
                    and not pipeline_restart.is_set()
                    and pipeline.isRunning()):
 
-                # ── Preview frame (dashboard + ROS2) ──
+                # ── Preview frame ──
                 preview_pkt = q_preview.tryGet()
                 if preview_pkt is not None:
                     frame_bgr = preview_pkt.getCvFrame()
 
-                    # FPS
                     fps_counter += 1
                     elapsed = time.time() - fps_time
                     if elapsed >= 1.0:
@@ -426,7 +309,6 @@ def pipeline_worker(ros_node):
                         fps_counter = 0
                         fps_time = time.time()
 
-                    # Overlays
                     with config_lock:
                         ov = dict(current_config)
 
@@ -434,7 +316,6 @@ def pipeline_worker(ros_node):
                         cv2.putText(frame_bgr, f"FPS: {fps_display:.1f}",
                                     (10, 25), cv2.FONT_HERSHEY_SIMPLEX,
                                     0.7, (0, 255, 0), 2)
-
                     if ov["show_timestamp"]:
                         ts = time.strftime("%Y-%m-%d %H:%M:%S")
                         h = frame_bgr.shape[0]
@@ -445,9 +326,7 @@ def pipeline_worker(ros_node):
                     with frame_lock:
                         current_frames["rgb"] = frame_bgr
 
-                    # ─────────────────────────────────────
-                    # [FUTURE] Publish to ROS2 image topics
-                    # ─────────────────────────────────────
+                    # [FUTURE] Publish to ROS2
                     # if rgb_pub.get_subscription_count() > 0:
                     #     msg = bridge.cv2_to_imgmsg(frame_bgr, encoding="bgr8")
                     #     msg.header.stamp = ros_node.get_clock().now().to_msg()
@@ -470,37 +349,31 @@ def pipeline_worker(ros_node):
                     if depth_pkt is not None:
                         disp = depth_pkt.getFrame()
                         disp_norm = (disp * 255.0 / max_disparity).astype(np.uint8)
-                        disp_color = cv2.applyColorMap(disp_norm,
-                                                       cv2.COLORMAP_JET)
+                        disp_color = cv2.applyColorMap(disp_norm, cv2.COLORMAP_JET)
                         with frame_lock:
                             current_frames["depth"] = disp_color
 
-                        # ─────────────────────────────────
                         # [FUTURE] Publish depth to ROS2
-                        # ─────────────────────────────────
                         # if depth_pub.get_subscription_count() > 0:
-                        #     depth_msg = bridge.cv2_to_imgmsg(
-                        #         disp, encoding="mono16")
-                        #     depth_msg.header.stamp = (
-                        #         ros_node.get_clock().now().to_msg())
-                        #     depth_msg.header.frame_id = (
-                        #         "oakd_stereo_optical_frame")
+                        #     depth_msg = bridge.cv2_to_imgmsg(disp, encoding="mono16")
+                        #     depth_msg.header.stamp = ros_node.get_clock().now().to_msg()
+                        #     depth_msg.header.frame_id = "oakd_stereo_optical_frame"
                         #     depth_pub.publish(depth_msg)
 
                 # ── H.265 encoded stream ──
                 h265_pkt = q_h265.tryGet()
                 if h265_pkt is not None:
                     with recording_lock:
-                        if recording_active and recording_file:
-                            recording_file.write(h265_pkt.getData())
+                        if state.recording_active and state.recording_file:
+                            state.recording_file.write(h265_pkt.getData())
 
-                # Live control updates (only when dashboard changes something)
+                # ── Live controls (only when changed) ──
                 if controls_dirty.is_set():
                     controls_dirty.clear()
                     with config_lock:
                         live_cfg = dict(current_config)
-                    apply_camera_controls(ctrl_queue, live_cfg)
-                    apply_ir_controls(device_ref, live_cfg)
+                    apply_camera_controls(state.ctrl_queue, live_cfg)
+                    apply_ir_controls(state.device_ref, live_cfg)
 
                 time.sleep(0.001)
 
@@ -511,662 +384,38 @@ def pipeline_worker(ros_node):
             time.sleep(2)
 
         finally:
-            device_ref = None
-            ctrl_queue = None
+            state.device_ref = None
+            state.ctrl_queue = None
             if pipeline is not None:
                 try:
                     pipeline.stop()
                 except Exception:
                     pass
             with recording_lock:
-                if recording_file:
-                    recording_file.close()
-                    recording_file = None
-                    recording_active = False
+                if state.recording_file:
+                    state.recording_file.close()
+                    state.recording_file = None
+                    state.recording_active = False
             ros_node.get_logger().info("Pipeline stopped.")
 
     ros_node.get_logger().info("Pipeline worker exited.")
 
 
-# ═════════════════════════════════════════════════════════════════
-# MJPEG generators
-# ═════════════════════════════════════════════════════════════════
-
-def mjpeg_gen(stream_key):
-    """Yields MJPEG frames for a given stream."""
-    while True:
-        with frame_lock:
-            frame = current_frames.get(stream_key)
-        if frame is not None:
-            with config_lock:
-                quality = current_config["jpeg_quality"]
-            ok, buf = cv2.imencode(".jpg", frame,
-                                   [cv2.IMWRITE_JPEG_QUALITY, quality])
-            if ok:
-                yield (b"--frame\r\n"
-                       b"Content-Type: image/jpeg\r\n\r\n"
-                       + buf.tobytes() + b"\r\n")
-        time.sleep(0.03)
-
-
-def mjpeg_both():
-    """Yields side-by-side RGB + depth as MJPEG."""
-    while True:
-        with frame_lock:
-            rgb = current_frames.get("rgb")
-            depth = current_frames.get("depth")
-
-        if rgb is not None:
-            if depth is not None:
-                # Resize depth to match RGB height
-                h, w = rgb.shape[:2]
-                depth_resized = cv2.resize(depth, (w, h))
-                combined = np.hstack([rgb, depth_resized])
-            else:
-                combined = rgb
-
-            with config_lock:
-                quality = current_config["jpeg_quality"]
-            ok, buf = cv2.imencode(".jpg", combined,
-                                   [cv2.IMWRITE_JPEG_QUALITY, quality])
-            if ok:
-                yield (b"--frame\r\n"
-                       b"Content-Type: image/jpeg\r\n\r\n"
-                       + buf.tobytes() + b"\r\n")
-        time.sleep(0.03)
-
-
-# ═════════════════════════════════════════════════════════════════
-# Dashboard HTML
-# ═════════════════════════════════════════════════════════════════
-
-DASHBOARD_HTML = """
-<!DOCTYPE html>
-<html>
-<head>
-  <title>OAK-D Pro — Front Camera</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-
-    body {
-      font-family: 'Courier New', monospace;
-      background: #0d1117;
-      color: #c9d1d9;
-      min-height: 100vh;
-    }
-
-    .header {
-      background: #161b22;
-      border-bottom: 1px solid #30363d;
-      padding: 14px 24px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-    }
-    .header h1 { font-size: 16px; color: #58a6ff; font-weight: normal; letter-spacing: 1px; }
-    .header .badge { background: #1f6feb; color: #fff; padding: 3px 10px; border-radius: 12px; font-size: 11px; }
-    #conn-status { font-size: 11px; color: #3fb950; }
-
-    .layout { display: flex; gap: 0; height: calc(100vh - 52px); }
-
-    .stream-panel {
-      flex: 1; display: flex; align-items: center; justify-content: center;
-      background: #010409; position: relative; overflow: hidden;
-    }
-    .stream-panel img { max-width: 100%; max-height: 100%; object-fit: contain; }
-    .stream-label {
-      position: absolute; top: 10px; left: 12px;
-      background: rgba(0,0,0,0.7); color: #f0883e;
-      padding: 4px 10px; border-radius: 4px; font-size: 12px; letter-spacing: 1px;
-    }
-
-    .controls-panel {
-      width: 360px; min-width: 360px; background: #161b22;
-      border-left: 1px solid #30363d; overflow-y: auto; padding: 16px;
-    }
-
-    .section { margin-bottom: 18px; }
-    .section-title {
-      color: #f0883e; font-size: 12px; text-transform: uppercase;
-      letter-spacing: 2px; margin-bottom: 10px; padding-bottom: 4px;
-      border-bottom: 1px solid #21262d;
-    }
-
-    .control-row { display: flex; align-items: center; margin-bottom: 8px; }
-    .control-row label { width: 130px; font-size: 12px; color: #8b949e; flex-shrink: 0; }
-    .control-row input[type=range] { flex: 1; accent-color: #58a6ff; height: 4px; }
-    .control-row .val { width: 55px; text-align: right; font-size: 12px; color: #58a6ff; flex-shrink: 0; margin-left: 6px; }
-
-    select, button {
-      background: #21262d; color: #c9d1d9; border: 1px solid #30363d;
-      padding: 5px 10px; border-radius: 6px; font-family: inherit; font-size: 12px; cursor: pointer;
-    }
-    button:hover { background: #30363d; }
-    button.active { background: #1f6feb; border-color: #1f6feb; color: #fff; }
-    button.rec { background: #da3633; border-color: #da3633; color: #fff; }
-    button.rec:hover { background: #f85149; }
-
-    .toggle-row { display: flex; align-items: center; margin-bottom: 8px; }
-    .toggle-row label { width: 130px; font-size: 12px; color: #8b949e; }
-    .toggle { position: relative; width: 40px; height: 20px; }
-    .toggle input { opacity: 0; width: 0; height: 0; }
-    .toggle .slider {
-      position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0;
-      background: #21262d; border-radius: 10px; transition: 0.2s;
-    }
-    .toggle .slider:before {
-      content: ""; position: absolute; height: 14px; width: 14px;
-      left: 3px; bottom: 3px; background: #8b949e; border-radius: 50%; transition: 0.2s;
-    }
-    .toggle input:checked + .slider { background: #1f6feb; }
-    .toggle input:checked + .slider:before { transform: translateX(20px); background: #fff; }
-
-    .btn-row { display: flex; gap: 6px; margin-top: 6px; }
-    .btn-row button { flex: 1; padding: 8px; }
-
-    #rec-indicator { display: none; color: #da3633; font-size: 11px; }
-    #rec-indicator.active { display: inline; }
-
-    @media (max-width: 900px) {
-      .layout { flex-direction: column; height: auto; }
-      .stream-panel { min-height: 300px; }
-      .controls-panel { width: 100%; min-width: 0; border-left: none; border-top: 1px solid #30363d; }
-    }
-  </style>
-</head>
-<body>
-  <div class="header">
-    <h1>OAK-D PRO — FRONT CAM</h1>
-    <span id="conn-status">● LIVE</span>
-    <span id="rec-indicator">⏺ REC</span>
-    <span class="badge">PORT {{ port }}</span>
-  </div>
-
-  <div class="layout">
-    <div class="stream-panel">
-      <span class="stream-label">FRONT — RGB + DEPTH</span>
-      <img id="stream" src="/video/both" alt="OAK-D Stream" />
-    </div>
-
-    <div class="controls-panel">
-
-      <!-- STREAM -->
-      <div class="section">
-        <div class="section-title">Stream</div>
-        <div class="control-row">
-          <label>View</label>
-          <select id="stream_mode" onchange="switchStream(this.value)">
-            <option value="both" selected>RGB + Depth</option>
-            <option value="rgb">RGB Only</option>
-            <option value="depth">Depth Only</option>
-          </select>
-        </div>
-        <div class="control-row">
-          <label>Resolution</label>
-          <select id="resolution" onchange="restartPipeline('resolution', this.value)">
-            <option value="480p">480p (cropped)</option>
-            <option value="720p">720p</option>
-            <option value="1080p" selected>1080p (native)</option>
-          </select>
-        </div>
-        <div class="control-row">
-          <label>FPS</label>
-          <select id="fps" onchange="restartPipeline('fps', parseInt(this.value))">
-            <option value="10">10</option>
-            <option value="15">15</option>
-            <option value="24">24</option>
-            <option value="30" selected>30</option>
-            <option value="60">60</option>
-          </select>
-        </div>
-        <div class="control-row">
-          <label>JPEG Quality</label>
-          <input type="range" min="30" max="100" value="80"
-                 oninput="setControl('jpeg_quality', parseInt(this.value), this)">
-          <span class="val" id="val_jpeg_quality">80</span>
-        </div>
-      </div>
-
-      <!-- RECORDING -->
-      <div class="section">
-        <div class="section-title">H.265 Recording</div>
-        <div class="btn-row">
-          <button id="rec-btn" onclick="toggleRecording()">⏺ Start Recording</button>
-        </div>
-      </div>
-
-      <!-- EXPOSURE -->
-      <div class="section">
-        <div class="section-title">Exposure</div>
-        <div class="toggle-row">
-          <label>Auto Exposure</label>
-          <div class="toggle">
-            <input type="checkbox" id="auto_exposure" checked
-                   onchange="setControl('auto_exposure', this.checked)">
-            <span class="slider"></span>
-          </div>
-        </div>
-        <div class="control-row">
-          <label>Exposure (µs)</label>
-          <input type="range" min="1" max="33000" value="8333" step="100"
-                 oninput="setControl('exposure_us', parseInt(this.value), this)">
-          <span class="val" id="val_exposure_us">8333</span>
-        </div>
-        <div class="control-row">
-          <label>ISO</label>
-          <input type="range" min="100" max="1600" value="400" step="50"
-                 oninput="setControl('iso', parseInt(this.value), this)">
-          <span class="val" id="val_iso">400</span>
-        </div>
-      </div>
-
-      <!-- FOCUS: Removed — OAK-D Pro FF is fixed focus, no AF motor -->
-
-      <!-- WHITE BALANCE -->
-      <div class="section">
-        <div class="section-title">White Balance</div>
-        <div class="toggle-row">
-          <label>Auto WB</label>
-          <div class="toggle">
-            <input type="checkbox" id="auto_white_balance" checked
-                   onchange="setControl('auto_white_balance', this.checked)">
-            <span class="slider"></span>
-          </div>
-        </div>
-        <div class="control-row">
-          <label>Color Temp (K)</label>
-          <input type="range" min="1000" max="12000" value="5500" step="100"
-                 oninput="setControl('white_balance_k', parseInt(this.value), this)">
-          <span class="val" id="val_white_balance_k">5500</span>
-        </div>
-      </div>
-
-      <!-- IMAGE -->
-      <div class="section">
-        <div class="section-title">Image</div>
-        <div class="control-row">
-          <label>Brightness</label>
-          <input type="range" min="-10" max="10" value="0"
-                 oninput="setControl('brightness', parseInt(this.value), this)">
-          <span class="val" id="val_brightness">0</span>
-        </div>
-        <div class="control-row">
-          <label>Contrast</label>
-          <input type="range" min="-10" max="10" value="0"
-                 oninput="setControl('contrast', parseInt(this.value), this)">
-          <span class="val" id="val_contrast">0</span>
-        </div>
-        <div class="control-row">
-          <label>Saturation</label>
-          <input type="range" min="-10" max="10" value="0"
-                 oninput="setControl('saturation', parseInt(this.value), this)">
-          <span class="val" id="val_saturation">0</span>
-        </div>
-        <div class="control-row">
-          <label>Sharpness</label>
-          <input type="range" min="0" max="4" value="1"
-                 oninput="setControl('sharpness', parseInt(this.value), this)">
-          <span class="val" id="val_sharpness">1</span>
-        </div>
-        <div class="control-row">
-          <label>Luma Denoise</label>
-          <input type="range" min="0" max="4" value="1"
-                 oninput="setControl('luma_denoise', parseInt(this.value), this)">
-          <span class="val" id="val_luma_denoise">1</span>
-        </div>
-        <div class="control-row">
-          <label>Chroma Denoise</label>
-          <input type="range" min="0" max="4" value="1"
-                 oninput="setControl('chroma_denoise', parseInt(this.value), this)">
-          <span class="val" id="val_chroma_denoise">1</span>
-        </div>
-      </div>
-
-      <!-- IR -->
-      <div class="section">
-        <div class="section-title">IR Illumination</div>
-        <div class="control-row">
-          <label>Dot Projector</label>
-          <input type="range" min="0" max="1" value="0" step="0.01"
-                 oninput="setControl('ir_dot_brightness', parseFloat(this.value), this)">
-          <span class="val" id="val_ir_dot_brightness">0.0</span>
-        </div>
-        <div class="control-row">
-          <label>Flood Light</label>
-          <input type="range" min="0" max="1" value="0" step="0.01"
-                 oninput="setControl('ir_flood_brightness', parseFloat(this.value), this)">
-          <span class="val" id="val_ir_flood_brightness">0.0</span>
-        </div>
-      </div>
-
-      <!-- DEPTH -->
-      <div class="section">
-        <div class="section-title">Stereo Depth</div>
-        <div class="control-row">
-          <label>Confidence</label>
-          <input type="range" min="0" max="255" value="200"
-                 oninput="restartPipeline('confidence_threshold', parseInt(this.value)); this.nextElementSibling.textContent=this.value">
-          <span class="val">200</span>
-        </div>
-        <div class="control-row">
-          <label>Median Filter</label>
-          <select onchange="restartPipeline('median_filter', this.value)">
-            <option value="OFF">Off</option>
-            <option value="KERNEL_3x3">3×3</option>
-            <option value="KERNEL_5x5">5×5</option>
-            <option value="KERNEL_7x7" selected>7×7</option>
-          </select>
-        </div>
-        <div class="toggle-row">
-          <label>LR Check</label>
-          <div class="toggle">
-            <input type="checkbox" checked
-                   onchange="restartPipeline('lr_check', this.checked)">
-            <span class="slider"></span>
-          </div>
-        </div>
-        <div class="toggle-row">
-          <label>Ext. Disparity</label>
-          <div class="toggle">
-            <input type="checkbox"
-                   onchange="restartPipeline('extended_disparity', this.checked)">
-            <span class="slider"></span>
-          </div>
-        </div>
-        <div class="toggle-row">
-          <label>Subpixel</label>
-          <div class="toggle">
-            <input type="checkbox"
-                   onchange="restartPipeline('subpixel', this.checked)">
-            <span class="slider"></span>
-          </div>
-        </div>
-      </div>
-
-      <!-- OVERLAY -->
-      <div class="section">
-        <div class="section-title">Overlay</div>
-        <div class="toggle-row">
-          <label>Show FPS</label>
-          <div class="toggle">
-            <input type="checkbox" id="show_fps" checked
-                   onchange="setControl('show_fps', this.checked)">
-            <span class="slider"></span>
-          </div>
-        </div>
-        <div class="toggle-row">
-          <label>Timestamp</label>
-          <div class="toggle">
-            <input type="checkbox" id="show_timestamp"
-                   onchange="setControl('show_timestamp', this.checked)">
-            <span class="slider"></span>
-          </div>
-        </div>
-      </div>
-
-      <!-- ACTIONS -->
-      <div class="section">
-        <div class="section-title">Actions</div>
-        <div class="btn-row">
-          <button onclick="snapshot()">📷 Snapshot</button>
-          <button onclick="resetDefaults()">↺ Reset</button>
-        </div>
-      </div>
-
-    </div>
-  </div>
-
-  <script>
-    let _controlTimer = null;
-    function setControl(key, value, el) {
-      const valSpan = document.getElementById('val_' + key);
-      if (valSpan) valSpan.textContent = typeof value === 'number' ?
-        (Number.isInteger(value) ? value : value.toFixed(2)) : value;
-
-      const send = () => fetch('/api/controls', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({[key]: value})
-      });
-
-      // Booleans (toggles) send immediately; sliders debounce
-      if (typeof value === 'boolean') {
-        send();
-      } else {
-        clearTimeout(_controlTimer);
-        _controlTimer = setTimeout(send, 150);
-      }
-    }
-
-    function restartPipeline(key, value) {
-      fetch('/api/restart', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({[key]: value})
-      }).then(() => {
-        setTimeout(() => {
-          const img = document.getElementById('stream');
-          const mode = document.getElementById('stream_mode').value;
-          img.src = '/video/' + mode + '?' + Date.now();
-        }, 3000);
-      });
-    }
-
-    function switchStream(mode) {
-      const img = document.getElementById('stream');
-      img.src = '/video/' + mode + '?' + Date.now();
-    }
-
-    function snapshot() { window.open('/snapshot', '_blank'); }
-
-    function resetDefaults() {
-      fetch('/api/reset', {method: 'POST'}).then(() => location.reload());
-    }
-
-    function toggleRecording() {
-      fetch('/api/recording/toggle', {method: 'POST'})
-        .then(r => r.json())
-        .then(data => {
-          const btn = document.getElementById('rec-btn');
-          const ind = document.getElementById('rec-indicator');
-          if (data.recording) {
-            btn.textContent = '⏹ Stop Recording';
-            btn.classList.add('rec');
-            ind.classList.add('active');
-          } else {
-            btn.textContent = '⏺ Start Recording';
-            btn.classList.remove('rec');
-            ind.classList.remove('active');
-          }
-        });
-    }
-
-    function pollStatus() {
-      fetch('/status').then(r => r.json()).then(data => {
-        document.getElementById('conn-status').textContent = '● LIVE';
-        document.getElementById('conn-status').style.color = '#3fb950';
-      }).catch(() => {
-        document.getElementById('conn-status').textContent = '● OFFLINE';
-        document.getElementById('conn-status').style.color = '#f85149';
-      });
-    }
-    setInterval(pollStatus, 3000);
-
-    fetch('/status').then(r => r.json()).then(cfg => {
-      const res = document.getElementById('resolution');
-      if (res) res.value = cfg.resolution || '1080p';
-      const fps = document.getElementById('fps');
-      if (fps) fps.value = cfg.fps || 30;
-    });
-  </script>
-</body>
-</html>
-"""
-
-
-# ═════════════════════════════════════════════════════════════════
-# Flask app
-# ═════════════════════════════════════════════════════════════════
-
-flask_app = Flask(__name__)
-
-
-@flask_app.route("/")
-def dashboard():
-    return render_template_string(DASHBOARD_HTML,
-                                  port=flask_app.config.get("PORT", 8080))
-
-
-@flask_app.route("/video/rgb")
-def video_rgb():
-    return Response(mjpeg_gen("rgb"),
-                    mimetype="multipart/x-mixed-replace; boundary=frame")
-
-
-@flask_app.route("/video/depth")
-def video_depth():
-    return Response(mjpeg_gen("depth"),
-                    mimetype="multipart/x-mixed-replace; boundary=frame")
-
-
-@flask_app.route("/video/both")
-def video_both():
-    return Response(mjpeg_both(),
-                    mimetype="multipart/x-mixed-replace; boundary=frame")
-
-
-@flask_app.route("/snapshot")
-def snapshot():
-    with frame_lock:
-        frame = current_frames.get("rgb")
-    if frame is None:
-        return "No frame available", 503
-    ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 95])
-    if not ok:
-        return "Encode failed", 500
-    return Response(buf.tobytes(), mimetype="image/jpeg",
-                    headers={"Content-Disposition": "inline; filename=snapshot.jpg"})
-
-
-@flask_app.route("/status")
-def status():
-    with config_lock:
-        cfg = dict(current_config)
-    with recording_lock:
-        cfg["recording"] = recording_active
-    cfg["device_connected"] = device_ref is not None
-    return jsonify(cfg)
-
-
-@flask_app.route("/api/controls", methods=["POST"])
-def api_controls():
-    """Update live controls (no pipeline restart needed)."""
-    data = request.get_json(force=True)
-    live_keys = {
-        "auto_exposure", "exposure_us", "iso",
-        "auto_white_balance", "white_balance_k",
-        "brightness", "contrast", "saturation", "sharpness",
-        "luma_denoise", "chroma_denoise",
-        "ir_dot_brightness", "ir_flood_brightness",
-        "show_fps", "show_timestamp", "jpeg_quality",
-    }
-    changed = False
-    with config_lock:
-        for key, value in data.items():
-            if key in live_keys:
-                current_config[key] = value
-                changed = True
-    if changed:
-        controls_dirty.set()
-    return jsonify({"ok": True})
-
-
-@flask_app.route("/api/restart", methods=["POST"])
-def api_restart():
-    """Update config and restart pipeline."""
-    data = request.get_json(force=True)
-    restart_keys = {
-        "resolution", "fps",
-        "enable_depth", "depth_preset", "lr_check",
-        "extended_disparity", "subpixel",
-        "confidence_threshold", "median_filter",
-    }
-    with config_lock:
-        for key, value in data.items():
-            if key in restart_keys:
-                current_config[key] = value
-    pipeline_restart.set()
-    return jsonify({"ok": True, "msg": "Pipeline restarting..."})
-
-
-@flask_app.route("/api/reset", methods=["POST"])
-def api_reset():
-    """Reset all config to defaults and restart pipeline."""
-    defaults = {
-        "resolution": "1080p", "fps": 30,
-        "auto_exposure": True, "exposure_us": 8333, "iso": 400,
-        "auto_focus": True, "autofocus_mode": "continuous", "manual_focus": 127,
-        "auto_white_balance": True, "white_balance_k": 5500,
-        "brightness": 0, "contrast": 0, "saturation": 0,
-        "sharpness": 1, "luma_denoise": 1, "chroma_denoise": 1,
-        "ir_dot_brightness": 0.0, "ir_flood_brightness": 0.0,
-        "enable_depth": True, "depth_preset": "HIGH_DENSITY",
-        "lr_check": True, "extended_disparity": False, "subpixel": False,
-        "confidence_threshold": 200, "median_filter": "KERNEL_7x7",
-        "show_fps": True, "show_timestamp": False, "jpeg_quality": 80,
-    }
-    with config_lock:
-        current_config.update(defaults)
-    pipeline_restart.set()
-    return jsonify({"ok": True})
-
-
-@flask_app.route("/api/recording/toggle", methods=["POST"])
-def api_recording_toggle():
-    """Toggle H.265 recording on/off."""
-    global recording_active, recording_file
-
-    with recording_lock:
-        if recording_active:
-            # Stop recording
-            if recording_file:
-                recording_file.close()
-                recording_file = None
-            recording_active = False
-            return jsonify({"recording": False, "msg": "Recording stopped."})
-        else:
-            # Start recording
-            with config_lock:
-                rec_dir = current_config["recording_dir"]
-            os.makedirs(rec_dir, exist_ok=True)
-            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filepath = os.path.join(rec_dir, f"oakd_front_{ts}.h265")
-            recording_file = open(filepath, "wb")
-            recording_active = True
-            return jsonify({"recording": True, "file": filepath,
-                            "msg": f"Recording to {filepath}"})
-
-
-# ═════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════
 # ROS2 Node
-# ═════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════
 
 class OakDNode(RosNode):
     def __init__(self):
         super().__init__('oakd_node')
-
-        # Load parameters from YAML → current_config
         self._declare_and_load_params()
 
         self.get_logger().info("OAK-D Pro node initializing...")
 
-        # Check for device
         devices = dai.Device.getAllAvailableDevices()
         if not devices:
             self.get_logger().error(
-                "No OAK-D devices found! Check USB. "
-                "Run test_oakd_connection.py for diagnostics.")
+                "No OAK-D devices found! Check USB.")
             return
 
         self.get_logger().info(f"Found {len(devices)} OAK device(s)")
@@ -1179,13 +428,11 @@ class OakDNode(RosNode):
         # Start Flask dashboard thread
         with config_lock:
             port = current_config["dashboard_port"]
-        flask_app.config["PORT"] = port
 
         self._flask_thread = threading.Thread(
-            target=self._run_flask, args=(port,), daemon=True)
+            target=run_server, args=(port,), daemon=True)
         self._flask_thread.start()
 
-        # Print access info
         self._print_endpoints(port)
 
     def _declare_and_load_params(self):
@@ -1193,14 +440,14 @@ class OakDNode(RosNode):
         param_defaults = {
             "resolution": "1080p",
             "fps": 30,
-            "preview_width": 640,
-            "preview_height": 360,
+            "preview_width": 1280,
+            "preview_height": 720,
             "dashboard_port": 8080,
             "jpeg_quality": 80,
             "enable_h265_recording": False,
             "h265_bitrate_kbps": 3000,
             "h265_keyframe_interval": 30,
-            "recording_dir": "/home/admin/recordings",
+            "recording_dir": "/root/ros2_ws/recordings",
             "auto_exposure": True,
             "exposure_us": 8333,
             "iso": 400,
@@ -1234,14 +481,7 @@ class OakDNode(RosNode):
                 value = self.get_parameter(key).value
                 current_config[key] = value
 
-    def _run_flask(self, port):
-        """Run Flask in a background thread."""
-        flask_app.run(host="0.0.0.0", port=port,
-                      threaded=True, use_reloader=False)
-
     def _print_endpoints(self, port):
-        """Print network addresses and endpoints."""
-        import subprocess
         ip_hints = []
         try:
             result = subprocess.run(
@@ -1267,15 +507,11 @@ class OakDNode(RosNode):
         for iface, ip in ip_hints:
             self.get_logger().info(f"  [{iface}] http://{ip}:{port}/")
         self.get_logger().info("=" * 50)
-        self.get_logger().info("  /video/rgb   /video/depth   /video/both")
-        self.get_logger().info("  /snapshot    /status        /api/controls")
-        self.get_logger().info("  /api/recording/toggle")
-        self.get_logger().info("=" * 50)
 
 
-# ═════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════
 # Entry point
-# ═════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════
 
 def main(args=None):
     rclpy.init(args=args)

@@ -6,8 +6,8 @@ oakd_node:
     # ── Stream settings ──
     resolution: "1080p"         # 480p, 720p, 1080p, 4k
     fps: 30
-    preview_width: 640          # Preview output for dashboard (lower res = less CPU)
-    preview_height: 360
+    preview_width: 1280          # Preview output for dashboard (lower res = less CPU)
+    preview_height: 720
 
     # ── Flask dashboard ──
     dashboard_port: 8080
@@ -17,7 +17,7 @@ oakd_node:
     enable_h265_recording: false         # Set true to record H.265 to disk
     h265_bitrate_kbps: 3000              # 0 = auto
     h265_keyframe_interval: 30           # Keyframe every N frames (1s at 30fps)
-    recording_dir: "/home/admin/recordings"
+    recording_dir: "/root/ros2_ws/recordings"
 
     # ── Exposure ──
     auto_exposure: true
