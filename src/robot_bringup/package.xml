@@ -10,6 +10,7 @@
 
   <exec_depend>dynamixel_driver</exec_depend>
   <exec_depend>steering_servo</exec_depend>
+  <exec_depend>camera_driver</exec_depend>
   <exec_depend>joy</exec_depend>
 
   <export>

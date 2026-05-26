@@ -1,0 +1,59 @@
+# OAK-D Pro camera configuration
+# Loaded by oakd.launch.py
+
+oakd_node:
+  ros__parameters:
+    # ── Stream settings ──
+    resolution: "1080p"         # 480p, 720p, 1080p, 4k
+    fps: 30
+    preview_width: 640          # Preview output for dashboard (lower res = less CPU)
+    preview_height: 360
+
+    # ── Flask dashboard ──
+    dashboard_port: 8080
+    jpeg_quality: 80            # MJPEG quality for dashboard stream (1-100)
+
+    # ── Hardware encoding (on Myriad X chip) ──
+    enable_h265_recording: false         # Set true to record H.265 to disk
+    h265_bitrate_kbps: 3000              # 0 = auto
+    h265_keyframe_interval: 30           # Keyframe every N frames (1s at 30fps)
+    recording_dir: "/home/admin/recordings"
+
+    # ── Exposure ──
+    auto_exposure: true
+    exposure_us: 8333           # Manual exposure in microseconds
+    iso: 400                    # Manual ISO sensitivity
+
+    # ── Focus (OAK-D Pro has motorized focus) ──
+    auto_focus: true
+    autofocus_mode: "continuous"  # continuous, auto, macro
+    manual_focus: 127             # 0-255 (manual mode only)
+
+    # ── White balance ──
+    auto_white_balance: true
+    white_balance_k: 5500       # Manual color temp in Kelvin
+
+    # ── Image adjustments ──
+    brightness: 0               # -10 to 10
+    contrast: 0                 # -10 to 10
+    saturation: 0               # -10 to 10
+    sharpness: 1                # 0 to 4
+    luma_denoise: 1             # 0 to 4
+    chroma_denoise: 1           # 0 to 4
+
+    # ── IR illumination (OAK-D Pro specific) ──
+    ir_dot_brightness: 0.0      # Dot projector intensity 0.0 - 1.0
+    ir_flood_brightness: 0.0    # Flood LED intensity 0.0 - 1.0
+
+    # ── Stereo depth ──
+    enable_depth: true
+    depth_preset: "HIGH_DENSITY"  # HIGH_DENSITY, HIGH_ACCURACY
+    lr_check: true
+    extended_disparity: false
+    subpixel: false
+    confidence_threshold: 200   # 0-255 (lower = more aggressive filtering)
+    median_filter: "KERNEL_7x7" # OFF, KERNEL_3x3, KERNEL_5x5, KERNEL_7x7
+
+    # ── Overlay ──
+    show_fps: true
+    show_timestamp: false
