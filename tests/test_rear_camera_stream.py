@@ -53,10 +53,17 @@ except ImportError as e:
 # Resolution presets (IMX219 native modes)
 # ─────────────────────────────────────────────
 
+# IMX219 native sensor modes (from rpicam-hello --list-cameras)
+# The sensor is 3280x2464 (4:3). Modes that don't use the full sensor area crop from center.
 RESOLUTION_MAP = {
-    "480p":  (640, 480),
-    "720p":  (1280, 720),
-    "1080p": (1920, 1080),
+    # ── Full sensor (no crop) ──
+    "1640x1232 (4:3 full)":   (1640, 1232),   # Full sensor, 4:3, ~41fps
+    "3280x2464 (4:3 max)":    (3280, 2464),   # Full sensor, max res, ~21fps
+    # ── Center crop (narrower FOV) ──
+    "1920x1080 (16:9 crop)":  (1920, 1080),   # Center crop, 16:9, ~47fps
+    "640x480 (4:3 crop)":     (640, 480),      # Heavy center crop, ~103fps
+    # ── Scaled from full sensor (full FOV, lower res) ──
+    "820x616 (4:3 scaled)":   (820, 616),      # Half of 1640x1232
 }
 
 # ─────────────────────────────────────────────
@@ -71,7 +78,7 @@ camera_instance = None  # Picamera2
 
 # Current config
 current_config = {
-    "resolution": "720p",
+    "resolution": "1640x1232 (4:3 full)",
     "fps": 30,
     # Image controls
     "brightness": 0.0,       # -1.0 to 1.0
@@ -497,9 +504,11 @@ DASHBOARD_HTML = """
         <div class="control-row">
           <label>Resolution</label>
           <select id="resolution" onchange="restartPipeline('resolution', this.value)">
-            <option value="480p">480p</option>
-            <option value="720p" selected>720p</option>
-            <option value="1080p">1080p</option>
+            <option value="1640x1232 (4:3 full)" selected>1640×1232 — 4:3 Full sensor</option>
+            <option value="3280x2464 (4:3 max)">3280×2464 — 4:3 Max res (~21fps)</option>
+            <option value="1920x1080 (16:9 crop)">1920×1080 — 16:9 Center crop</option>
+            <option value="640x480 (4:3 crop)">640×480 — 4:3 Heavy crop</option>
+            <option value="820x616 (4:3 scaled)">820×616 — 4:3 Scaled (low bandwidth)</option>
           </select>
         </div>
         <div class="control-row">
@@ -712,7 +721,7 @@ DASHBOARD_HTML = """
     // ── Sync UI on load ──
     fetch('/status').then(r => r.json()).then(cfg => {
       const res = document.getElementById('resolution');
-      if (res) res.value = cfg.resolution || '720p';
+      if (res) res.value = cfg.resolution || '1640x1232 (4:3 full)';
       const fps = document.getElementById('fps');
       if (fps) fps.value = cfg.fps || 30;
     });
@@ -802,7 +811,7 @@ def api_restart():
 def api_reset():
     """Reset all config to defaults and restart pipeline."""
     defaults = {
-        "resolution": "720p", "fps": 30,
+        "resolution": "1640x1232 (4:3 full)", "fps": 30,
         "brightness": 0.0, "contrast": 1.0,
         "saturation": 1.0, "sharpness": 1.0,
         "auto_exposure": True, "exposure_time": 33000,
@@ -829,9 +838,9 @@ def parse_args():
         description="Rear Camera LAN Streaming Server (RPi V2 NoIR)")
     p.add_argument("--fps", type=int, default=30,
                    help="Target FPS (default 30)")
-    p.add_argument("--resolution", default="720p",
+    p.add_argument("--resolution", default="1640x1232 (4:3 full)",
                    choices=list(RESOLUTION_MAP.keys()),
-                   help="Starting resolution (default 720p)")
+                   help="Starting resolution (default: full sensor 1640x1232)")
     p.add_argument("--port", type=int, default=8081,
                    help="HTTP port (default 8081, avoids conflict with OAK-D on 8080)")
     p.add_argument("--host", default="0.0.0.0",
