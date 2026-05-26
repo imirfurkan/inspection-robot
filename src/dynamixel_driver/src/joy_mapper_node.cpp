@@ -14,9 +14,11 @@
  * Button mapping:
  *   button 0 = trigger
  *   button 3 = center servo (used for steering)
- *   button 7 = all velocity mode
- *   button 8 = split mode (rear velocity, front current)
- *   button 9 = hold front drive (rear holds, front nudges)
+ *   button 7  = drive_all (all velocity, normal driving)
+ *   button 8  = drive_rear_assist (rear vel + front current)
+ *   button 9  = drive_front_nudge (rear hold + front current nudge)
+ *   button 10 = drive_front_only (rear hold + front velocity)
+ *   button 11 = drive_rear_only (rear velocity + front hold)
  */
 
 #include <rclcpp/rclcpp.hpp>
@@ -24,6 +26,8 @@
 #include <geometry_msgs/msg/twist.hpp>
 #include <std_msgs/msg/string.hpp>
 #include <cmath>
+#include <vector>
+#include <string>
 
 class JoyMapperNode : public rclcpp::Node
 {
@@ -33,14 +37,18 @@ public:
     {
         // Declare parameters
         this->declare_parameter("deadzone", 0.15);
-        this->declare_parameter("max_linear_speed", 1.0);   // normalized 0-1
-        this->declare_parameter("max_angular_speed", 1.0);   // normalized 0-1
-        this->declare_parameter("axis_linear", 1);           // stick Y
-        this->declare_parameter("axis_angular", 2);          // stick twist
-        this->declare_parameter("enable_button", -1);        // -1 = no deadman switch
-        this->declare_parameter("button_all_velocity", 7);
-        this->declare_parameter("button_split_mode", 8);
-        this->declare_parameter("button_hold_front_drive", 9);
+        this->declare_parameter("max_linear_speed", 1.0);
+        this->declare_parameter("max_angular_speed", 1.0);
+        this->declare_parameter("axis_linear", 1);
+        this->declare_parameter("axis_angular", 2);
+        this->declare_parameter("enable_button", -1);
+
+        // Drive mode button assignments (Extreme 3D Pro has buttons 0-11)
+        this->declare_parameter("button_drive_all", 7);
+        this->declare_parameter("button_drive_rear_assist", 8);
+        this->declare_parameter("button_drive_front_nudge", 9);
+        this->declare_parameter("button_drive_front_only", 10);
+        this->declare_parameter("button_drive_rear_only", 11);
 
         deadzone_          = this->get_parameter("deadzone").as_double();
         max_linear_speed_  = this->get_parameter("max_linear_speed").as_double();
@@ -48,8 +56,20 @@ public:
         axis_linear_       = this->get_parameter("axis_linear").as_int();
         axis_angular_      = this->get_parameter("axis_angular").as_int();
         enable_button_     = this->get_parameter("enable_button").as_int();
-        btn_all_velocity_  = this->get_parameter("button_all_velocity").as_int();
-        btn_split_mode_    = this->get_parameter("button_split_mode").as_int();
+
+        // Build mode button table: pairs of (button_index, mode_string)
+        // This avoids repeating the same if-block 5 times
+        auto addMode = [&](const std::string& param, const std::string& mode_name) {
+            int btn = this->get_parameter(param).as_int();
+            if (btn >= 0) {
+                mode_buttons_.push_back({btn, mode_name});
+            }
+        };
+        addMode("button_drive_all",          "drive_all");
+        addMode("button_drive_rear_assist",  "drive_rear_assist");
+        addMode("button_drive_front_nudge",  "drive_front_nudge");
+        addMode("button_drive_front_only",   "drive_front_only");
+        addMode("button_drive_rear_only",    "drive_rear_only");
 
         cmd_pub_ = this->create_publisher<geometry_msgs::msg::Twist>("/cmd_vel", 10);
         mode_pub_ = this->create_publisher<std_msgs::msg::String>("/drive_mode", 10);
@@ -58,13 +78,14 @@ public:
             "/joy", 10,
             std::bind(&JoyMapperNode::joyCallback, this, std::placeholders::_1));
 
-        RCLCPP_INFO(this->get_logger(),
-            "Joy mapper ready. Button %d=all velocity, Button %d=split mode",
-            btn_all_velocity_, btn_split_mode_);
+        RCLCPP_INFO(this->get_logger(), "Joy mapper ready. Mode buttons:");
+        for (const auto& [btn, name] : mode_buttons_) {
+            RCLCPP_INFO(this->get_logger(), "  Button %d → %s", btn, name.c_str());
+        }
     }
 
 private:
-    double applyDeadzone(double val) const // method being const shows it will not modify any member variables of the class.
+    double applyDeadzone(double val) const
     {
         if (std::abs(val) < deadzone_) return 0.0;
         // Rescale so output starts from 0 after deadzone
@@ -75,37 +96,19 @@ private:
     void joyCallback(const sensor_msgs::msg::Joy::SharedPtr msg)
     {
         // ── Drive mode buttons ──
-        if (btn_all_velocity_ >= 0 &&
-            btn_all_velocity_ < static_cast<int>(msg->buttons.size()) &&
-            msg->buttons[btn_all_velocity_])
-        {
-            auto mode_msg = std_msgs::msg::String();
-            mode_msg.data = "all_velocity";
-            mode_pub_->publish(mode_msg);
-            RCLCPP_INFO(this->get_logger(), "Mode switch: ALL VELOCITY");
+        // Check all registered mode buttons. If pressed, publish the mode string.
+        for (const auto& [btn, mode_name] : mode_buttons_) {
+            if (btn < static_cast<int>(msg->buttons.size()) && msg->buttons[btn]) {
+                auto mode_msg = std_msgs::msg::String();
+                mode_msg.data = mode_name;
+                mode_pub_->publish(mode_msg);
+                RCLCPP_INFO(this->get_logger(), "Mode: %s", mode_name.c_str());
+            }
         }
 
-        if (btn_split_mode_ >= 0 &&
-            btn_split_mode_ < static_cast<int>(msg->buttons.size()) &&
-            msg->buttons[btn_split_mode_])
-        {
-            auto mode_msg = std_msgs::msg::String();
-            mode_msg.data = "split_mode";
-            mode_pub_->publish(mode_msg);
-            RCLCPP_INFO(this->get_logger(), "Mode switch: SPLIT (rear vel, front current)");
-        }
-
-        if (btn_hold_front_ >= 0 &&
-            btn_hold_front_ < static_cast<int>(msg->buttons.size()) &&
-            msg->buttons[btn_hold_front_])
-        {
-            auto mode_msg = std_msgs::msg::String();
-            mode_msg.data = "hold_front_drive";
-            mode_pub_->publish(mode_msg);
-            RCLCPP_INFO(this->get_logger(), "Mode switch: HOLD_FRONT_DRIVE (rear hold, front nudge)");
-        }
-
-        // ── Deadman switch check ── // #TODO understand this, how do buttons work, just change of state makes it postiive etc?
+        // ── Deadman switch check ──
+        // If enable_button is set (>= 0), the button must be held for commands to pass.
+        // If not held, publish zero velocity and skip axis reading.
         if (enable_button_ >= 0) {
             if (enable_button_ >= static_cast<int>(msg->buttons.size()) ||
                 !msg->buttons[enable_button_])
@@ -141,9 +144,9 @@ private:
     int axis_linear_;
     int axis_angular_;
     int enable_button_;
-    int btn_all_velocity_;
-    int btn_split_mode_;
-    int btn_hold_front_;
+
+    // Mode button table: each entry is (button_index, mode_string_to_publish)
+    std::vector<std::pair<int, std::string>> mode_buttons_;
 
     // ROS2
     rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr cmd_pub_;

@@ -9,25 +9,26 @@
  *   Front-Left: ID 10    Front-Right: ID 6
  *   Rear-Left:  ID 1     Rear-Right:  ID 8
  *
- * Two drive modes:
- *   "all_velocity" — all motors in velocity mode (default)
- *   "split_mode"   — rear motors in velocity mode, front motors in current mode
- *   "hold_front_drive" — rear velocity=0 (holds position) + front current (nudge)
- *
- * In split_mode, front wheel current is proportional to the rear velocity
- * command, providing compliant torque assist without fighting the rear wheels.
+ * Five drive modes:
+ *   "drive_all"          — all 4 motors velocity (default, normal driving)
+ *   "drive_rear_assist"  — rear velocity + front current (compliant assist)
+ *   "drive_front_nudge"  — rear hold (vel=0) + front current (fix buckling)
+ *   "drive_front_only"   — rear hold (vel=0) + front velocity (front maneuver)
+ *   "drive_rear_only"    — rear velocity + front hold (vel=0) (rear maneuver)
  *
  * Rear motors ALWAYS stay in velocity mode. Only front motors switch
  * between velocity and current mode. This means rear wheels never lose
  * torque during a mode switch — no rollback on slopes.
-
+ *
  * Publishes /motor_status (Float32MultiArray) with telemetry.
  *
  * e-manual: https://emanual.robotis.com/docs/en/dxl/x/xw540-t140/
  */
 
 #include <rclcpp/rclcpp.hpp>
-#include <geometry_msgs/msg/twist.hpp> // TODO why is this twist
+#include <geometry_msgs/msg/twist.hpp> // standard ROS2 message for velocity commands
+                                       // linear.x = forward/backward, angular.z = yaw rotation
+                                       // using Twist means any standard ROS2 tool can drive the robot
 #include <std_msgs/msg/float32_multi_array.hpp>
 #include <std_msgs/msg/string.hpp> // for drive mode
 #include <vector>
@@ -72,7 +73,7 @@ public:
         this->declare_parameter("rear_ids", std::vector<int64_t>{1, 8});
         this->declare_parameter("operating_mode", "velocity");
         this->declare_parameter("max_velocity", 100);
-        this->declare_parameter("max_current_ma", 400.0); 
+        this->declare_parameter("max_current_ma", 400.0);
         this->declare_parameter("deadzone", 0.15);
         this->declare_parameter("loop_rate", 50.0);
 
@@ -92,7 +93,7 @@ public:
 
         auto front_vec = this->get_parameter("front_ids").as_integer_array();
         for (auto id : front_vec) front_ids_.insert(static_cast<uint8_t>(id));
- 
+
         auto rear_vec = this->get_parameter("rear_ids").as_integer_array();
         for (auto id : rear_vec) rear_ids_.insert(static_cast<uint8_t>(id));
 
@@ -117,8 +118,8 @@ public:
         RCLCPP_INFO(this->get_logger(),
             "Port %s opened at %d baud", port_name_.c_str(), baudrate_);
 
-        // Start in all_velocity mode
-        drive_mode_ = DriveMode::ALL_VELOCITY;
+        // Start in drive_all mode
+        drive_mode_ = DriveMode::DRIVE_ALL;
         initMotors();
 
         // ── ROS2 pub/sub ──
@@ -129,7 +130,7 @@ public:
         mode_sub_ = this->create_subscription<std_msgs::msg::String>(
             "/drive_mode", 10,
             std::bind(&DynamixelDriverNode::modeCallback, this, std::placeholders::_1));
-        
+
         status_pub_ = this->create_publisher<std_msgs::msg::Float32MultiArray>(
             "/motor_status", 10);
 
@@ -162,12 +163,33 @@ public:
     }
 
 private:
-    enum class DriveMode { ALL_VELOCITY, SPLIT_MODE, HOLD_FRONT_DRIVE };
- 
+    enum class DriveMode {
+        DRIVE_ALL,          // all velocity
+        DRIVE_REAR_ASSIST,  // rear velocity, front current (compliant)
+        DRIVE_FRONT_NUDGE,  // rear hold (vel=0), front current (nudge)
+        DRIVE_FRONT_ONLY,   // rear hold (vel=0), front velocity
+        DRIVE_REAR_ONLY     // rear velocity, front hold (vel=0)
+    };
+
     // ── Helper: do front motors need current mode in this drive mode? ──
+    // Only DRIVE_REAR_ASSIST and DRIVE_FRONT_NUDGE use current mode for front.
+    // All other modes keep front in velocity mode (either joystick-driven or held at 0).
     bool frontNeedsCurrent(DriveMode mode) const
     {
-        return mode == DriveMode::SPLIT_MODE || mode == DriveMode::HOLD_FRONT_DRIVE;
+        return mode == DriveMode::DRIVE_REAR_ASSIST || mode == DriveMode::DRIVE_FRONT_NUDGE;
+    }
+
+    // ── Helper: mode name string for logging ──
+    const char* modeName(DriveMode mode) const
+    {
+        switch (mode) {
+            case DriveMode::DRIVE_ALL:         return "DRIVE_ALL";
+            case DriveMode::DRIVE_REAR_ASSIST: return "DRIVE_REAR_ASSIST";
+            case DriveMode::DRIVE_FRONT_NUDGE: return "DRIVE_FRONT_NUDGE";
+            case DriveMode::DRIVE_FRONT_ONLY:  return "DRIVE_FRONT_ONLY";
+            case DriveMode::DRIVE_REAR_ONLY:   return "DRIVE_REAR_ONLY";
+            default:                           return "UNKNOWN";
+        }
     }
 
     // ── Motor initialization ──────────────────────────────────────
@@ -175,34 +197,34 @@ private:
     {
         active_ids_.clear();
         std::string found_str, missing_str;
- 
+
         for (uint8_t id : motor_ids_) {
             uint8_t dxl_error = 0;
             int result = packet_handler_->ping(port_handler_, id, &dxl_error);
- 
+
             if (result != COMM_SUCCESS) {
                 missing_str += std::to_string(id) + " ";
                 continue;
             }
- 
+
             if (dxl_error != 0) {
                 RCLCPP_WARN(this->get_logger(), "Motor ID %d: hardware error — %s",
                     id, packet_handler_->getRxPacketError(dxl_error));
             }
- 
+
             active_ids_.push_back(id);
             found_str += std::to_string(id) + " ";
         }
- 
+
         RCLCPP_INFO(this->get_logger(), "Motors FOUND:   [%s]", found_str.c_str());
         if (!missing_str.empty()) {
             RCLCPP_WARN(this->get_logger(), "Motors MISSING: [%s]", missing_str.c_str());
         }
         RCLCPP_INFO(this->get_logger(), "Initialized %zu / %zu motors",
             active_ids_.size(), motor_ids_.size());
- 
+
         motors_initialized_ = !active_ids_.empty();
- 
+
         if (motors_initialized_) {
             // Set all motors to velocity mode on startup
             for (uint8_t id : active_ids_) {
@@ -212,51 +234,26 @@ private:
                 RCLCPP_INFO(this->get_logger(), "Motor ID %d: VELOCITY mode, torque ON", id);
             }
         }
- 
+
         return motors_initialized_;
     }
- 
-    // DEPRECEATED
-    // void applyDriveMode()
-    // {
-    //     for (uint8_t id : active_ids_) {
-    //         // Disable torque before changing mode
-    //         writeByteRegister(id, ADDR_TORQUE_ENABLE, 0);
- 
-    //         uint8_t mode;
-    //         if (drive_mode_ == DriveMode::SPLIT_MODE && front_ids_.count(id)) {
-    //             mode = MODE_CURRENT;
-    //             RCLCPP_INFO(this->get_logger(),
-    //                 "Motor ID %d: CURRENT mode (front, compliant)", id);
-    //         } else {
-    //             mode = MODE_VELOCITY;
-    //             RCLCPP_INFO(this->get_logger(),
-    //                 "Motor ID %d: VELOCITY mode", id);
-    //         }
- 
-    //         writeByteRegister(id, ADDR_OPERATING_MODE, mode);
- 
-    //         // Re-enable torque
-    //         writeByteRegister(id, ADDR_TORQUE_ENABLE, 1);
-    //     }
-    // }
- 
+
     // ── Switch front motors between velocity and current mode ─────
     // Only touches front motors. Rear motors keep running undisturbed.
     void switchFrontMode(uint8_t new_mode)
     {
         for (uint8_t id : active_ids_) {
             if (!front_ids_.count(id)) continue;  // skip rear motors
- 
+
             // Zero out front motor commands before switching
             writeWordRegister(id, ADDR_GOAL_CURRENT, 0);
             writeDwordRegister(id, ADDR_GOAL_VELOCITY, 0);
- 
+
             // Torque off → change mode → torque on
             writeByteRegister(id, ADDR_TORQUE_ENABLE, 0);
             writeByteRegister(id, ADDR_OPERATING_MODE, new_mode);
             writeByteRegister(id, ADDR_TORQUE_ENABLE, 1);
- 
+
             const char* mode_name = (new_mode == MODE_CURRENT) ? "CURRENT" : "VELOCITY";
             RCLCPP_INFO(this->get_logger(),
                 "Motor ID %d: switched to %s mode", id, mode_name);
@@ -267,144 +264,177 @@ private:
     void modeCallback(const std_msgs::msg::String::SharedPtr msg)
     {
         if (!motors_initialized_) return;
- 
+
         DriveMode new_mode;
-        if (msg->data == "all_velocity") {
-            new_mode = DriveMode::ALL_VELOCITY;
-        } else if (msg->data == "split_mode") {
-            new_mode = DriveMode::SPLIT_MODE;
-        } else if (msg->data == "hold_front_drive") {
-            new_mode = DriveMode::HOLD_FRONT_DRIVE;
+        if (msg->data == "drive_all") {
+            new_mode = DriveMode::DRIVE_ALL;
+        } else if (msg->data == "drive_rear_assist") {
+            new_mode = DriveMode::DRIVE_REAR_ASSIST;
+        } else if (msg->data == "drive_front_nudge") {
+            new_mode = DriveMode::DRIVE_FRONT_NUDGE;
+        } else if (msg->data == "drive_front_only") {
+            new_mode = DriveMode::DRIVE_FRONT_ONLY;
+        } else if (msg->data == "drive_rear_only") {
+            new_mode = DriveMode::DRIVE_REAR_ONLY;
         } else {
             RCLCPP_WARN(this->get_logger(), "Unknown drive mode: %s", msg->data.c_str());
             return;
         }
- 
+
         if (new_mode == drive_mode_) return;  // already in this mode
- 
+
         // Determine if front motors need an operating mode change.
-        // Front motors are in current mode for SPLIT_MODE and HOLD_FRONT_DRIVE,
-        // and in velocity mode for ALL_VELOCITY.
+        // Front motors use current mode for DRIVE_REAR_ASSIST and DRIVE_FRONT_NUDGE,
+        // velocity mode for everything else.
         bool old_front_current = frontNeedsCurrent(drive_mode_);
         bool new_front_current = frontNeedsCurrent(new_mode);
- 
+
         if (old_front_current != new_front_current) {
-            // Front motor operating mode actually changes
+            // Front motor operating mode actually changes (~24ms, rear undisturbed)
             uint8_t front_mode = new_front_current ? MODE_CURRENT : MODE_VELOCITY;
             switchFrontMode(front_mode);
         }
- 
-        // If entering HOLD_FRONT_DRIVE, set rear velocity to 0 immediately
-        // (rear stays in velocity mode with goal=0 — actively holds position)
-        if (new_mode == DriveMode::HOLD_FRONT_DRIVE) {
+
+        // If entering a mode where rear holds, set rear velocity to 0 immediately.
+        // Rear stays in velocity mode with goal=0 — actively resists rotation (powered brake).
+        if (new_mode == DriveMode::DRIVE_FRONT_NUDGE || new_mode == DriveMode::DRIVE_FRONT_ONLY) {
             for (uint8_t id : active_ids_) {
                 if (rear_ids_.count(id)) {
                     writeDwordRegister(id, ADDR_GOAL_VELOCITY, 0);
                 }
             }
         }
- 
+
+        // If entering a mode where front holds (vel=0), set front velocity to 0 immediately.
+        // This only applies when front is in velocity mode (DRIVE_REAR_ONLY).
+        if (new_mode == DriveMode::DRIVE_REAR_ONLY) {
+            for (uint8_t id : active_ids_) {
+                if (front_ids_.count(id)) {
+                    writeDwordRegister(id, ADDR_GOAL_VELOCITY, 0);
+                }
+            }
+        }
+
+        RCLCPP_INFO(this->get_logger(), "Drive mode: %s → %s",
+            modeName(drive_mode_), modeName(new_mode));
+
         drive_mode_ = new_mode;
- 
-        const char* mode_names[] = {"ALL_VELOCITY", "SPLIT_MODE", "HOLD_FRONT_DRIVE"};
-        RCLCPP_INFO(this->get_logger(), "Drive mode: %s",
-            mode_names[static_cast<int>(new_mode)]);
     }
- 
+
     void cmdVelCallback(const geometry_msgs::msg::Twist::SharedPtr msg)
     {
         if (!motors_initialized_) return;
- 
+
         double speed = msg->linear.x;
         double clamped = std::clamp(speed, -1.0, 1.0);
- 
+
         // Pre-compute commands
         int32_t vel = static_cast<int32_t>(clamped * max_velocity_);
         int16_t cur = static_cast<int16_t>(clamped * max_current_units_);
- 
+
         for (uint8_t id : active_ids_) {
             bool is_front = front_ids_.count(id) > 0;
             bool is_rear  = rear_ids_.count(id) > 0;
             int sign = reverse_ids_.count(id) ? -1 : 1;
- 
+
             switch (drive_mode_) {
-                case DriveMode::ALL_VELOCITY:
-                    // All motors: velocity mode
+                case DriveMode::DRIVE_ALL:
+                    // All motors: velocity from joystick
                     writeDwordRegister(id, ADDR_GOAL_VELOCITY, vel * sign);
                     break;
- 
-                case DriveMode::SPLIT_MODE:
+
+                case DriveMode::DRIVE_REAR_ASSIST:
                     if (is_front) {
-                        // Front: current mode (compliant assist)
+                        // Front: current mode (compliant assist, proportional to joystick)
                         writeWordRegister(id, ADDR_GOAL_CURRENT,
                             static_cast<int16_t>(cur * sign));
                     } else {
-                        // Rear: velocity mode (primary drive)
+                        // Rear: velocity from joystick (primary drive)
                         writeDwordRegister(id, ADDR_GOAL_VELOCITY, vel * sign);
                     }
                     break;
- 
-                case DriveMode::HOLD_FRONT_DRIVE:
+
+                case DriveMode::DRIVE_FRONT_NUDGE:
                     if (is_front) {
                         // Front: current mode (joystick-controlled nudge)
                         writeWordRegister(id, ADDR_GOAL_CURRENT,
                             static_cast<int16_t>(cur * sign));
                     } else if (is_rear) {
-                        // Rear: velocity = 0 (active hold, ignores joystick)
+                        // Rear: hold position (velocity = 0, active brake)
                         writeDwordRegister(id, ADDR_GOAL_VELOCITY, 0);
+                    }
+                    break;
+
+                case DriveMode::DRIVE_FRONT_ONLY:
+                    if (is_front) {
+                        // Front: velocity from joystick
+                        writeDwordRegister(id, ADDR_GOAL_VELOCITY, vel * sign);
+                    } else if (is_rear) {
+                        // Rear: hold position (velocity = 0, active brake)
+                        writeDwordRegister(id, ADDR_GOAL_VELOCITY, 0);
+                    }
+                    break;
+
+                case DriveMode::DRIVE_REAR_ONLY:
+                    if (is_front) {
+                        // Front: hold position (velocity = 0, active brake)
+                        writeDwordRegister(id, ADDR_GOAL_VELOCITY, 0);
+                    } else if (is_rear) {
+                        // Rear: velocity from joystick
+                        writeDwordRegister(id, ADDR_GOAL_VELOCITY, vel * sign);
                     }
                     break;
             }
         }
     }
- 
+
     void publishStatus()
     {
         if (!motors_initialized_) return;
- 
+
         auto msg = std_msgs::msg::Float32MultiArray();
         for (uint8_t id : active_ids_) {
             uint32_t raw_vel = 0;
             packet_handler_->read4ByteTxRx(port_handler_, id,
                 ADDR_PRESENT_VELOCITY, &raw_vel);
             int32_t vel = static_cast<int32_t>(raw_vel);
- 
+
             uint8_t temp = 0;
             packet_handler_->read1ByteTxRx(port_handler_, id,
                 ADDR_PRESENT_TEMP, &temp);
- 
+
             uint16_t raw_v = 0;
             packet_handler_->read2ByteTxRx(port_handler_, id,
                 ADDR_PRESENT_VOLTAGE, &raw_v);
- 
+
             msg.data.push_back(static_cast<float>(vel));
             msg.data.push_back(static_cast<float>(temp));
             msg.data.push_back(static_cast<float>(raw_v) / 10.0f);
         }
         status_pub_->publish(msg);
     }
- 
+
     // ── Dynamixel register helpers ────────────────────────────────
     void writeByteRegister(uint8_t id, uint16_t addr, uint8_t value)
     {
         uint8_t dxl_error = 0;
         packet_handler_->write1ByteTxRx(port_handler_, id, addr, value, &dxl_error);
     }
- 
+
     void writeWordRegister(uint8_t id, uint16_t addr, int16_t value)
     {
         uint8_t dxl_error = 0;
         packet_handler_->write2ByteTxRx(port_handler_, id, addr,
             static_cast<uint16_t>(value), &dxl_error);
     }
- 
+
     void writeDwordRegister(uint8_t id, uint16_t addr, int32_t value)
     {
         uint8_t dxl_error = 0;
         packet_handler_->write4ByteTxRx(port_handler_, id, addr,
             static_cast<uint32_t>(value), &dxl_error);
     }
- 
+
     // ── Member variables ──────────────────────────────────────────
     std::vector<uint8_t> motor_ids_;
     std::vector<uint8_t> active_ids_;
@@ -416,13 +446,13 @@ private:
     int max_velocity_;
     double max_current_ma_;
     int16_t max_current_units_;
- 
-    DriveMode drive_mode_ = DriveMode::ALL_VELOCITY;
+
+    DriveMode drive_mode_ = DriveMode::DRIVE_ALL;
     bool motors_initialized_ = false;
- 
+
     dynamixel::PortHandler*   port_handler_   = nullptr;
     dynamixel::PacketHandler* packet_handler_ = nullptr;
- 
+
     rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr cmd_sub_;
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr mode_sub_;
     rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr status_pub_;

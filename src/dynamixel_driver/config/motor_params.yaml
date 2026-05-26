@@ -24,8 +24,11 @@ dynamixel_driver_node:
 
     # Max current for front wheels in split_mode (milliamps).
     # XH540-W140-R stall current is ~4200 mA. At 50 RPM, current is around 1.4A.
-    # TODO tune here. 
-    max_current_ma: 1400.0
+    # TODO tune here.
+    max_current_ma: 62.0 # yer icin buldugumuz deger
 
     # Control loop rate (Hz)
     loop_rate: 50.0
+
+    # arka 0 velocity, on velocity
+    # on 0 velocity, arka velocity
