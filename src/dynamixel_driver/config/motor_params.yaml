@@ -11,6 +11,9 @@ dynamixel_driver_node:
     front_ids: [10, 6]
     rear_ids: [1, 8]
 
+    rear_left_id: 1
+    rear_right_id: 8
+
     # Motors that need their velocity/current negated for forward motion.
     reverse_ids: [1, 6] ## [1, 6]
 

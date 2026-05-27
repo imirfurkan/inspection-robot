@@ -71,6 +71,8 @@ public:
         this->declare_parameter("reverse_ids", std::vector<int64_t>{});
         this->declare_parameter("front_ids", std::vector<int64_t>{10, 6});
         this->declare_parameter("rear_ids", std::vector<int64_t>{1, 8});
+        this->declare_parameter("rear_left_id", 1);
+        this->declare_parameter("rear_right_id", 8);
         this->declare_parameter("operating_mode", "velocity");
         this->declare_parameter("max_velocity", 100);
         this->declare_parameter("max_current_ma", 400.0);
@@ -96,6 +98,9 @@ public:
 
         auto rear_vec = this->get_parameter("rear_ids").as_integer_array();
         for (auto id : rear_vec) rear_ids_.insert(static_cast<uint8_t>(id));
+
+        rear_left_id_ = static_cast<uint8_t>(this->get_parameter("rear_left_id").as_int());
+        rear_right_id_ = static_cast<uint8_t>(this->get_parameter("rear_right_id").as_int());
 
         max_velocity_ = this->get_parameter("max_velocity").as_int();
         max_current_ma_ = this->get_parameter("max_current_ma").as_double();
@@ -169,6 +174,8 @@ private:
         DRIVE_FRONT_NUDGE,  // rear hold (vel=0), front current (nudge)
         DRIVE_FRONT_ONLY,   // rear hold (vel=0), front velocity
         DRIVE_REAR_ONLY     // rear velocity, front hold (vel=0)
+        DRIVE_PIVOT_LEFT,   // rear-left hold, rear-right velocity, front current
+        DRIVE_PIVOT_RIGHT   // rear-right hold, rear-left velocity, front current
     };
 
     // ── Helper: do front motors need current mode in this drive mode? ──
@@ -176,7 +183,10 @@ private:
     // All other modes keep front in velocity mode (either joystick-driven or held at 0).
     bool frontNeedsCurrent(DriveMode mode) const
     {
-        return mode == DriveMode::DRIVE_REAR_ASSIST || mode == DriveMode::DRIVE_FRONT_NUDGE;
+        return mode == DriveMode::DRIVE_REAR_ASSIST 
+            || mode == DriveMode::DRIVE_FRONT_NUDGE
+            || mode == DriveMode::DRIVE_PIVOT_LEFT
+            || mode == DriveMode::DRIVE_PIVOT_RIGHT;
     }
 
     // ── Helper: mode name string for logging ──
@@ -188,6 +198,8 @@ private:
             case DriveMode::DRIVE_FRONT_NUDGE: return "DRIVE_FRONT_NUDGE";
             case DriveMode::DRIVE_FRONT_ONLY:  return "DRIVE_FRONT_ONLY";
             case DriveMode::DRIVE_REAR_ONLY:   return "DRIVE_REAR_ONLY";
+            case DriveMode::DRIVE_PIVOT_LEFT:  return "DRIVE_PIVOT_LEFT";
+            case DriveMode::DRIVE_PIVOT_RIGHT: return "DRIVE_PIVOT_RIGHT";
             default:                           return "UNKNOWN";
         }
     }
@@ -276,6 +288,10 @@ private:
             new_mode = DriveMode::DRIVE_FRONT_ONLY;
         } else if (msg->data == "drive_rear_only") {
             new_mode = DriveMode::DRIVE_REAR_ONLY;
+        } else if (msg->data == "drive_pivot_left") {
+            new_mode = DriveMode::DRIVE_PIVOT_LEFT;
+        } else if (msg->data == "drive_pivot_right") {
+            new_mode = DriveMode::DRIVE_PIVOT_RIGHT;
         } else {
             RCLCPP_WARN(this->get_logger(), "Unknown drive mode: %s", msg->data.c_str());
             return;
@@ -310,6 +326,22 @@ private:
         if (new_mode == DriveMode::DRIVE_REAR_ONLY) {
             for (uint8_t id : active_ids_) {
                 if (front_ids_.count(id)) {
+                    writeDwordRegister(id, ADDR_GOAL_VELOCITY, 0);
+                }
+            }
+        }
+
+        // Pivot modes: hold only one rear wheel
+        if (new_mode == DriveMode::DRIVE_PIVOT_LEFT) {
+            for (uint8_t id : active_ids_) {
+                if (id == rear_left_id_) {
+                    writeDwordRegister(id, ADDR_GOAL_VELOCITY, 0);
+                }
+            }
+        }
+        if (new_mode == DriveMode::DRIVE_PIVOT_RIGHT) {
+            for (uint8_t id : active_ids_) {
+                if (id == rear_right_id_) {
                     writeDwordRegister(id, ADDR_GOAL_VELOCITY, 0);
                 }
             }
@@ -384,6 +416,28 @@ private:
                         writeDwordRegister(id, ADDR_GOAL_VELOCITY, vel * sign);
                     }
                     break;
+
+                case DriveMode::DRIVE_PIVOT_LEFT:
+                    if (is_front) {
+                        writeWordRegister(id, ADDR_GOAL_CURRENT,
+                            static_cast<int16_t>(cur * sign));
+                    } else if (id == rear_left_id_) {
+                        writeDwordRegister(id, ADDR_GOAL_VELOCITY, 0);
+                    } else if (id == rear_right_id_) {
+                        writeDwordRegister(id, ADDR_GOAL_VELOCITY, vel * sign);
+                    }
+                    break;
+
+                case DriveMode::DRIVE_PIVOT_RIGHT:
+                    if (is_front) {
+                        writeWordRegister(id, ADDR_GOAL_CURRENT,
+                            static_cast<int16_t>(cur * sign));
+                    } else if (id == rear_right_id_) {
+                        writeDwordRegister(id, ADDR_GOAL_VELOCITY, 0);
+                    } else if (id == rear_left_id_) {
+                        writeDwordRegister(id, ADDR_GOAL_VELOCITY, vel * sign);
+                    }
+                    break;
             }
         }
     }
@@ -441,11 +495,14 @@ private:
     std::set<uint8_t>    reverse_ids_;
     std::set<uint8_t>    front_ids_;
     std::set<uint8_t>    rear_ids_;
+    uint8_t rear_left_id_;
+    uint8_t rear_right_id_;
     std::string port_name_;
     int baudrate_;
     int max_velocity_;
     double max_current_ma_;
     int16_t max_current_units_;
+    
 
     DriveMode drive_mode_ = DriveMode::DRIVE_ALL;
     bool motors_initialized_ = false;

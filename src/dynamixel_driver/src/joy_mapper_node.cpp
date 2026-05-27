@@ -44,6 +44,8 @@ public:
         this->declare_parameter("enable_button", -1);
 
         // Drive mode button assignments (Extreme 3D Pro has buttons 0-11)
+        this->declare_parameter("button_drive_pivot_left", 4);
+        this->declare_parameter("button_drive_pivot_right", 5);
         this->declare_parameter("button_drive_all", 7);
         this->declare_parameter("button_drive_rear_assist", 8);
         this->declare_parameter("button_drive_front_nudge", 9);
@@ -65,6 +67,8 @@ public:
                 mode_buttons_.push_back({btn, mode_name});
             }
         };
+        addMode("button_drive_pivot_left",   "drive_pivot_left");
+        addMode("button_drive_pivot_right",  "drive_pivot_right");
         addMode("button_drive_all",          "drive_all");
         addMode("button_drive_rear_assist",  "drive_rear_assist");
         addMode("button_drive_front_nudge",  "drive_front_nudge");
