@@ -16,6 +16,7 @@ from flask import Flask, Response, jsonify, request, render_template_string
 from camera_driver.shared_state import (
     frame_lock, current_frames,
     config_lock, current_config,
+    imu_lock, imu_data,
     recording_lock,
     pipeline_restart, controls_dirty,
     device_ref,
@@ -206,6 +207,34 @@ def api_recording_toggle():
             state.recording_active = True
             return jsonify({"recording": True, "file": filepath,
                             "msg": f"Recording to {filepath}"})
+
+
+@flask_app.route("/api/imu")
+def api_imu():
+    """Return latest IMU data as JSON."""
+    with imu_lock:
+        data = dict(imu_data)
+    return jsonify(data)
+
+
+@flask_app.route("/api/imu/zero", methods=["POST"])
+def api_imu_zero():
+    """Set current orientation as the zero reference."""
+    with imu_lock:
+        state.imu_ref_quat["i"] = imu_data["rotation"]["i"]
+        state.imu_ref_quat["j"] = imu_data["rotation"]["j"]
+        state.imu_ref_quat["k"] = imu_data["rotation"]["k"]
+        state.imu_ref_quat["real"] = imu_data["rotation"]["real"]
+        state.imu_ref_set = True
+    return jsonify({"ok": True, "msg": "IMU zeroed."})
+
+
+@flask_app.route("/api/imu/reset", methods=["POST"])
+def api_imu_reset():
+    """Clear the zero reference (show absolute orientation)."""
+    with imu_lock:
+        state.imu_ref_set = False
+    return jsonify({"ok": True, "msg": "IMU reference cleared."})
 
 
 # ═══════════════════════════════════════════════════════

@@ -37,6 +37,23 @@ recording_file = None
 
 
 # ═══════════════════════════════════════════════════════
+# IMU data (written by pipeline, read by dashboard)
+# ═══════════════════════════════════════════════════════
+
+imu_lock = threading.Lock()
+imu_data = {
+    "accel": {"x": 0.0, "y": 0.0, "z": 0.0},
+    "gyro": {"x": 0.0, "y": 0.0, "z": 0.0},
+    "rotation": {"i": 0.0, "j": 0.0, "k": 0.0, "real": 1.0},
+    "orientation": {"pitch": 0.0, "roll": 0.0, "yaw": 0.0},
+    "timestamp": 0,
+}
+# Reference quaternion for "zero" orientation (set by Zero IMU button)
+imu_ref_quat = {"i": 0.0, "j": 0.0, "k": 0.0, "real": 1.0}
+imu_ref_set = False
+
+
+# ═══════════════════════════════════════════════════════
 # Pipeline control events
 # ═══════════════════════════════════════════════════════
 
@@ -54,8 +71,8 @@ current_config = {
     # Stream
     "resolution": "1080p",
     "fps": 30,
-    "preview_width": 1280,
-    "preview_height": 720,
+    "preview_width": 640,
+    "preview_height": 360,
     # Dashboard
     "dashboard_port": 8080,
     "jpeg_quality": 80,
@@ -63,7 +80,7 @@ current_config = {
     "enable_h265_recording": False,
     "h265_bitrate_kbps": 3000,
     "h265_keyframe_interval": 30,
-    "recording_dir": "/root/ros2_ws/recordings",
+    "recording_dir": "/home/admin/recordings",
     # Exposure
     "auto_exposure": True,
     "exposure_us": 8333,

@@ -363,6 +363,37 @@ DASHBOARD_HTML = """
     .tab-content::-webkit-scrollbar-track { background: transparent; }
     .tab-content::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
 
+    /* ─── IMU ─── */
+    .imu-grid { display: flex; flex-direction: column; gap: 8px; }
+    .imu-axis { display: flex; align-items: center; gap: 8px; }
+    .imu-label {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px; font-weight: 600;
+      color: var(--text-muted); width: 16px;
+    }
+    .imu-bar-wrap {
+      flex: 1; height: 16px; background: var(--bg-raised);
+      border-radius: 3px; overflow: hidden; position: relative;
+    }
+    .imu-bar {
+      position: absolute; top: 0; height: 100%;
+      border-radius: 3px; transition: width 0.1s, left 0.1s;
+      left: 50%; width: 0;
+    }
+    .imu-bar.accel-x, .imu-bar.gyro-x { background: #ef4444; }
+    .imu-bar.accel-y, .imu-bar.gyro-y { background: #22c55e; }
+    .imu-bar.accel-z, .imu-bar.gyro-z { background: #3b82f6; }
+    .imu-val {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px; color: var(--text-secondary);
+      width: 60px; text-align: right;
+    }
+    .imu-unit {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px; color: var(--text-muted);
+      text-align: right; margin-top: 2px;
+    }
+
     /* ─── RESPONSIVE ─── */
     @media (max-width: 900px) {
       .layout { flex-direction: column; }
@@ -796,12 +827,82 @@ DASHBOARD_HTML = """
 
         <!-- ════ ROBOT OPS TAB ════ -->
         <div class="tab-pane" id="pane-robot">
+
+          <div class="section">
+            <div class="section-title robot">IMU — Accelerometer</div>
+            <div class="imu-grid">
+              <div class="imu-axis">
+                <span class="imu-label">X</span>
+                <div class="imu-bar-wrap"><div class="imu-bar accel-x" id="bar-ax"></div></div>
+                <span class="imu-val" id="imu-ax">0.000</span>
+              </div>
+              <div class="imu-axis">
+                <span class="imu-label">Y</span>
+                <div class="imu-bar-wrap"><div class="imu-bar accel-y" id="bar-ay"></div></div>
+                <span class="imu-val" id="imu-ay">0.000</span>
+              </div>
+              <div class="imu-axis">
+                <span class="imu-label">Z</span>
+                <div class="imu-bar-wrap"><div class="imu-bar accel-z" id="bar-az"></div></div>
+                <span class="imu-val" id="imu-az">0.000</span>
+              </div>
+            </div>
+            <div class="imu-unit">m/s²</div>
+          </div>
+
+          <div class="section">
+            <div class="section-title robot">IMU — Gyroscope</div>
+            <div class="imu-grid">
+              <div class="imu-axis">
+                <span class="imu-label">X</span>
+                <div class="imu-bar-wrap"><div class="imu-bar gyro-x" id="bar-gx"></div></div>
+                <span class="imu-val" id="imu-gx">0.000</span>
+              </div>
+              <div class="imu-axis">
+                <span class="imu-label">Y</span>
+                <div class="imu-bar-wrap"><div class="imu-bar gyro-y" id="bar-gy"></div></div>
+                <span class="imu-val" id="imu-gy">0.000</span>
+              </div>
+              <div class="imu-axis">
+                <span class="imu-label">Z</span>
+                <div class="imu-bar-wrap"><div class="imu-bar gyro-z" id="bar-gz"></div></div>
+                <span class="imu-val" id="imu-gz">0.000</span>
+              </div>
+            </div>
+            <div class="imu-unit">rad/s</div>
+          </div>
+
+            <div class="imu-grid">
+              <div class="imu-axis">
+                <span class="imu-label" style="width:40px">Pitch</span>
+                <div class="imu-bar-wrap"><div class="imu-bar accel-x" id="bar-pitch"></div></div>
+                <span class="imu-val" id="imu-pitch">0.0°</span>
+              </div>
+              <div class="imu-axis">
+                <span class="imu-label" style="width:40px">Roll</span>
+                <div class="imu-bar-wrap"><div class="imu-bar accel-y" id="bar-roll"></div></div>
+                <span class="imu-val" id="imu-roll">0.0°</span>
+              </div>
+              <div class="imu-axis">
+                <span class="imu-label" style="width:40px">Yaw</span>
+                <div class="imu-bar-wrap"><div class="imu-bar accel-z" id="bar-yaw"></div></div>
+                <span class="imu-val" id="imu-yaw">0.0°</span>
+              </div>
+            </div>
+            <div class="imu-unit">degrees</div>
+            <div class="btn-row" style="margin-top:10px">
+              <button onclick="zeroIMU()">Zero IMU</button>
+              <button onclick="resetIMU()">Reset</button>
+            </div>
+          </div>
+
           <div class="section">
             <div class="section-title robot">Status</div>
             <div style="color: var(--text-muted); font-size: 13px; line-height: 2;">
-              Battery, joystick mapping, LED controls, and other robot operations will go here.
+              Battery, joystick mapping, LED controls coming soon.
             </div>
           </div>
+
         </div>
 
       </div>
@@ -931,6 +1032,67 @@ DASHBOARD_HTML = """
     setInterval(connectRear, 5000);
     pollFront();
     connectRear();
+
+    // ── IMU polling ──
+    function updateBar(id, value, maxVal) {
+      const bar = document.getElementById(id);
+      if (!bar) return;
+      const pct = Math.min(Math.abs(value) / maxVal, 1) * 50;
+      if (value >= 0) {
+        bar.style.left = '50%';
+        bar.style.width = pct + '%';
+      } else {
+        bar.style.left = (50 - pct) + '%';
+        bar.style.width = pct + '%';
+      }
+    }
+
+    let _imuActive = false;
+    function pollIMU() {
+      // Only poll when robot tab is visible
+      const robotPane = document.getElementById('pane-robot');
+      if (!robotPane || !robotPane.classList.contains('active')) return;
+
+      fetch(FRONT_BASE + '/api/imu').then(r => r.json()).then(d => {
+        _imuActive = true;
+        const a = d.accel, g = d.gyro;
+        document.getElementById('imu-ax').textContent = a.x.toFixed(3);
+        document.getElementById('imu-ay').textContent = a.y.toFixed(3);
+        document.getElementById('imu-az').textContent = a.z.toFixed(3);
+        document.getElementById('imu-gx').textContent = g.x.toFixed(3);
+        document.getElementById('imu-gy').textContent = g.y.toFixed(3);
+        document.getElementById('imu-gz').textContent = g.z.toFixed(3);
+
+        updateBar('bar-ax', a.x, 15);
+        updateBar('bar-ay', a.y, 15);
+        updateBar('bar-az', a.z, 15);
+        updateBar('bar-gx', g.x, 5);
+        updateBar('bar-gy', g.y, 5);
+        updateBar('bar-gz', g.z, 5);
+
+        // Use server-computed orientation (with reference quaternion applied)
+        const pitch = d.orientation.pitch;
+        const roll = d.orientation.roll;
+        const yaw = d.orientation.yaw;
+
+        document.getElementById('imu-pitch').textContent = pitch.toFixed(1) + '°';
+        document.getElementById('imu-roll').textContent = roll.toFixed(1) + '°';
+        document.getElementById('imu-yaw').textContent = yaw.toFixed(1) + '°';
+        updateBar('bar-pitch', pitch, 90);
+        updateBar('bar-roll', roll, 90);
+        updateBar('bar-yaw', yaw, 180);
+
+        drawTilt(a.x, a.y, a.z);
+      }).catch(() => {});
+    }
+    setInterval(pollIMU, 100);  // 10Hz update for smooth display
+
+    function zeroIMU() {
+      fetch(FRONT_BASE + '/api/imu/zero', {method: 'POST'});
+    }
+    function resetIMU() {
+      fetch(FRONT_BASE + '/api/imu/reset', {method: 'POST'});
+    }
   </script>
 </body>
 </html>

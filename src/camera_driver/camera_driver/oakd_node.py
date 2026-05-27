@@ -36,6 +36,7 @@ from rclpy.node import Node as RosNode
 from camera_driver.shared_state import (
     frame_lock, current_frames,
     config_lock, current_config,
+    imu_lock, imu_data,
     recording_lock,
     pipeline_stop, pipeline_restart, controls_dirty,
 )
@@ -152,6 +153,15 @@ def build_pipeline(cfg):
         mono_right.out.link(stereo.right)
 
         queues["depth"] = stereo.disparity.createOutputQueue()
+
+    # ── IMU (BNO085: 9-axis with on-chip sensor fusion) ──
+    imu = pipeline.create(dai.node.IMU)
+    imu.enableIMUSensor([dai.IMUSensor.ACCELEROMETER_RAW,
+                         dai.IMUSensor.GYROSCOPE_RAW,
+                         dai.IMUSensor.ROTATION_VECTOR], 100)
+    imu.setBatchReportThreshold(1)
+    imu.setMaxBatchReports(10)
+    queues["imu"] = imu.out.createOutputQueue()
 
     return pipeline, queues
 
@@ -273,6 +283,7 @@ def pipeline_worker(ros_node):
             q_h265 = queues["h265"]
             state.ctrl_queue = queues["cam_ctrl"]
             q_depth = queues.get("depth")
+            q_imu = queues.get("imu")
 
             # Apply initial controls
             time.sleep(0.5)
@@ -367,6 +378,66 @@ def pipeline_worker(ros_node):
                         if state.recording_active and state.recording_file:
                             state.recording_file.write(h265_pkt.getData())
 
+                # ── IMU data ──
+                if q_imu is not None:
+                    imu_pkt = q_imu.tryGet()
+                    if imu_pkt is not None:
+                        imu_packets = imu_pkt.packets
+                        if imu_packets:
+                            p = imu_packets[-1]
+                            a = p.acceleroMeter
+                            g = p.gyroscope
+                            rv = p.rotationVector
+                            with imu_lock:
+                                imu_data["accel"]["x"] = round(a.x, 3)
+                                imu_data["accel"]["y"] = round(a.y, 3)
+                                imu_data["accel"]["z"] = round(a.z, 3)
+                                imu_data["gyro"]["x"] = round(g.x, 3)
+                                imu_data["gyro"]["y"] = round(g.y, 3)
+                                imu_data["gyro"]["z"] = round(g.z, 3)
+                                imu_data["rotation"]["i"] = round(rv.i, 5)
+                                imu_data["rotation"]["j"] = round(rv.j, 5)
+                                imu_data["rotation"]["k"] = round(rv.k, 5)
+                                imu_data["rotation"]["real"] = round(rv.real, 5)
+
+                                # Compute orientation relative to reference
+                                qi, qj, qk, qr = rv.i, rv.j, rv.k, rv.real
+
+                                if state.imu_ref_set:
+                                    # q_rel = q_ref_inv * q_current
+                                    # Inverse of unit quaternion: negate i,j,k
+                                    ri = -state.imu_ref_quat["i"]
+                                    rj = -state.imu_ref_quat["j"]
+                                    rk = -state.imu_ref_quat["k"]
+                                    rr = state.imu_ref_quat["real"]
+                                    # Quaternion multiplication: ref_inv * current
+                                    qi2 = rr*qi + ri*qr + rj*qk - rk*qj
+                                    qj2 = rr*qj - ri*qk + rj*qr + rk*qi
+                                    qk2 = rr*qk + ri*qj - rj*qi + rk*qr
+                                    qr2 = rr*qr - ri*qi - rj*qj - rk*qk
+                                    qi, qj, qk, qr = qi2, qj2, qk2, qr2
+
+                                # Euler from quaternion (ZYX)
+                                import math
+                                sinr = 2 * (qr * qi + qj * qk)
+                                cosr = 1 - 2 * (qi * qi + qj * qj)
+                                sensor_roll = math.atan2(sinr, cosr) * 57.2958
+
+                                sinp = 2 * (qr * qj - qk * qi)
+                                sensor_pitch = (math.copysign(90, sinp) if abs(sinp) >= 1
+                                                else math.asin(sinp) * 57.2958)
+
+                                siny = 2 * (qr * qk + qi * qj)
+                                cosy = 1 - 2 * (qj * qj + qk * qk)
+                                sensor_yaw = math.atan2(siny, cosy) * 57.2958
+
+                                # Swap pitch/roll (sensor axes don't match robot axes)
+                                imu_data["orientation"]["pitch"] = round(sensor_roll, 1)
+                                imu_data["orientation"]["roll"] = round(sensor_yaw, 1)
+                                imu_data["orientation"]["yaw"] = round(sensor_pitch, 1)
+
+                                imu_data["timestamp"] = time.time()
+
                 # ── Live controls (only when changed) ──
                 if controls_dirty.is_set():
                     controls_dirty.clear()
@@ -440,14 +511,14 @@ class OakDNode(RosNode):
         param_defaults = {
             "resolution": "1080p",
             "fps": 30,
-            "preview_width": 1280,
-            "preview_height": 720,
+            "preview_width": 640,
+            "preview_height": 360,
             "dashboard_port": 8080,
             "jpeg_quality": 80,
             "enable_h265_recording": False,
             "h265_bitrate_kbps": 3000,
             "h265_keyframe_interval": 30,
-            "recording_dir": "/root/ros2_ws/recordings",
+            "recording_dir": "/home/admin/recordings",
             "auto_exposure": True,
             "exposure_us": 8333,
             "iso": 400,
