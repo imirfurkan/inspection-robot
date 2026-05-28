@@ -20,6 +20,7 @@ from camera_driver.shared_state import (
     recording_lock,
     pipeline_restart, controls_dirty,
     device_ref,
+    position_lock, position_state, position_ranges,
 )
 import camera_driver.shared_state as state
 from camera_driver.dashboard.template import DASHBOARD_HTML
@@ -237,6 +238,19 @@ def api_imu_reset():
     with imu_lock:
         state.imu_ref_set = False
     return jsonify({"ok": True, "msg": "IMU reference cleared."})
+
+
+@flask_app.route("/api/position")
+def api_position():
+    """Return current robot position state (pitch-based classification)."""
+    with position_lock:
+        data = dict(position_state)
+    # Include the configured ranges for the dashboard to display
+    data["ranges"] = [
+        {"min": lo, "max": hi, "label": lbl}
+        for (lo, hi, lbl) in position_ranges
+    ]
+    return jsonify(data)
 
 
 # ═══════════════════════════════════════════════════════
