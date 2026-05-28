@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.8)
 project(dynamixel_driver)
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
@@ -19,6 +19,7 @@ find_package(dynamixel_sdk REQUIRED)
 # === Dynamixel Driver Node ===
 add_executable(dynamixel_driver_node
   src/dynamixel_driver_node.cpp
+  src/drive_modes.cpp
 )
 ament_target_dependencies(dynamixel_driver_node
   rclcpp
