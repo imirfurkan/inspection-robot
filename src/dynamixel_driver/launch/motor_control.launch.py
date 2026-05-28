@@ -31,14 +31,7 @@ def generate_launch_description():
             executable='joy_mapper_node',
             name='joy_mapper_node',
             output='screen',
-            parameters=[{
-                'deadzone': 0.15,
-                'max_linear_speed': 1.0,
-                'max_angular_speed': 1.0,
-                'axis_linear': 1,
-                'axis_angular': 2,
-                'enable_button': -1,
-            }],
+            parameters=[robot_params],
         ),
 
         # Dynamixel Driver: /cmd_vel linear.x → motors

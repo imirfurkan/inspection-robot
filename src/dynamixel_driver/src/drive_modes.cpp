@@ -61,10 +61,10 @@ std::map<std::string, DriveModeDef> buildDefaultModes(const MotorLayout& m)
             {RR, {ControlType::VELOCITY, 1.0f}},
         },
         .reverse_profile = {
-            {FL, {ControlType::CURRENT,  1.0f}},
-            {FR, {ControlType::CURRENT,  1.0f}},
-            {RL, {ControlType::VELOCITY, 1.0f}},
-            {RR, {ControlType::VELOCITY, 1.0f}},
+            {FL, {ControlType::VELOCITY,  1.0f}},
+            {FR, {ControlType::VELOCITY,  1.0f}},
+            {RL, {ControlType::CURRENT, 1.0f}},
+            {RR, {ControlType::CURRENT, 1.0f}},
         }
     };
 
@@ -135,10 +135,10 @@ std::map<std::string, DriveModeDef> buildDefaultModes(const MotorLayout& m)
     modes["drive_pivot_left"] = {
         .name = "drive_pivot_left",
         .forward_profile = {
-            {FL, {ControlType::CURRENT,  1.0f}},
-            {FR, {ControlType::CURRENT,  1.0f}},
-            {RL, {ControlType::HOLD,     0.0f}},
-            {RR, {ControlType::VELOCITY, 1.0f}},
+            {FL, {ControlType::VELOCITY,  0.85f}},
+            {FR, {ControlType::VELOCITY,  1.0f}},
+            {RL, {ControlType::HOLD,     0.0f}}, // 0.785
+            {RR, {ControlType::VELOCITY, 0.94f}},
         },
         .reverse_profile = {
             // TODO: customize for reverse driving. Example:
@@ -146,10 +146,10 @@ std::map<std::string, DriveModeDef> buildDefaultModes(const MotorLayout& m)
             //   rear-left → CURRENT,
             //   rear-right → HOLD
             // For now, mirrors forward.
-            {FL, {ControlType::CURRENT,  1.0f}},
-            {FR, {ControlType::CURRENT,  1.0f}},
+            {FL, {ControlType::VELOCITY,  0.85f}},
+            {FR, {ControlType::VELOCITY,  1.0f}},
             {RL, {ControlType::HOLD,     0.0f}},
-            {RR, {ControlType::VELOCITY, 1.0f}},
+            {RR, {ControlType::VELOCITY, 0.94f}},
         }
     };
 
@@ -163,9 +163,9 @@ std::map<std::string, DriveModeDef> buildDefaultModes(const MotorLayout& m)
     modes["drive_pivot_right"] = {
         .name = "drive_pivot_right",
         .forward_profile = {
-            {FL, {ControlType::CURRENT,  1.0f}},
-            {FR, {ControlType::CURRENT,  1.0f}},
-            {RL, {ControlType::VELOCITY, 1.0f}},
+            {FL, {ControlType::VELOCITY,  1.0f}},
+            {FR, {ControlType::VELOCITY,  0.85f}},
+            {RL, {ControlType::VELOCITY, 0.94f}},
             {RR, {ControlType::HOLD,     0.0f}},
         },
         .reverse_profile = {
@@ -175,9 +175,9 @@ std::map<std::string, DriveModeDef> buildDefaultModes(const MotorLayout& m)
             // {RL, {ControlType::CURRENT,  1.0f}},  // rear-left current
             // {RR, {ControlType::HOLD,     0.0f}},  // rear-right still hold
             // For now, mirrors forward:
-            {FL, {ControlType::CURRENT,  1.0f}},
-            {FR, {ControlType::CURRENT,  1.0f}},
-            {RL, {ControlType::VELOCITY, 1.0f}},
+            {FL, {ControlType::VELOCITY,  1.0f}},
+            {FR, {ControlType::VELOCITY,  0.85f}},
+            {RL, {ControlType::VELOCITY, 0.94f}},
             {RR, {ControlType::HOLD,     0.0f}},
         }
     };

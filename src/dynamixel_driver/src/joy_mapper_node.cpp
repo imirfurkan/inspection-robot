@@ -74,6 +74,7 @@ public:
             }
         }
 
+            
         // ── Publishers / Subscribers ──
         cmd_pub_  = this->create_publisher<geometry_msgs::msg::Twist>("/cmd_vel", 10);
         mode_pub_ = this->create_publisher<std_msgs::msg::String>("/drive_mode", 10);
@@ -137,6 +138,8 @@ private:
         auto twist = geometry_msgs::msg::Twist();
         twist.linear.x = linear;
         twist.angular.z = angular;
+        RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+    "Publishing linear.x=%.3f, angular.z=%.3f", twist.linear.x, twist.angular.z);
         cmd_pub_->publish(twist);
     }
 

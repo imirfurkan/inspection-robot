@@ -34,10 +34,10 @@ dynamixel_driver_node:
 
     # Max current for current-controlled wheels (milliamps)
     # XH540-W140-R stall current is ~4200 mA. At 50 RPM ~1.4A.
-    max_current_ma: 400.0   # yer icin buldugumuz deger 62
+    max_current_ma: 62.0   # yer icin buldugumuz deger 62
 
     # Control loop rate (Hz)
-    loop_rate: 50.0
+    loop_rate: 3000.0
 
     # Default drive mode on startup
     default_mode: "drive_all"

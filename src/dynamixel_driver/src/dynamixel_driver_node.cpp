@@ -244,6 +244,8 @@ private:
     // and on zero-crossing (when direction flips to the other profile).
     void applyProfileOperatingModes(const std::map<uint8_t, MotorCommand>& profile)
     {
+        RCLCPP_INFO(this->get_logger(), "Applying profile, going_forward_=%d", going_forward_);
+
         for (uint8_t id : active_ids_) {
             MotorCommand cmd = getCommand(profile, id);
             uint8_t target = requiredOperatingMode(cmd.type);
@@ -309,7 +311,8 @@ private:
 
         double speed = msg->linear.x;
         double clamped = std::clamp(speed, -1.0, 1.0);
-        bool now_forward = (clamped >= 0.0);
+        bool now_forward = (clamped <= 0.0); // TODO important
+        // RCLCPP_INFO(this->get_logger(), "clamped=%.3f, now_forward=%d, going_forward_=%d", clamped, now_forward, going_forward_);
 
         // ── Zero-crossing detection ──
         // When direction flips, some motors may need their Dynamixel
@@ -333,6 +336,12 @@ private:
         for (uint8_t id : active_ids_) {
             MotorCommand cmd = getCommand(profile, id);
             int sign = reverse_ids_.count(id) ? -1 : 1;
+            
+            RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+            "Motor %d: profile=%s, cmd_type=%d, op_mode=%d",
+            id, going_forward_ ? "FWD" : "REV",
+            static_cast<int>(cmd.type),
+            current_op_mode_.count(id) ? current_op_mode_[id] : -1);
 
             switch (cmd.type) {
                 case ControlType::VELOCITY: {
