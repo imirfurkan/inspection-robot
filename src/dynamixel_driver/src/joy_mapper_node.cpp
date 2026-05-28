@@ -11,14 +11,14 @@
  *   axis 2 = stick twist Z (rotation)
  *   axis 3 = throttle slider
  *
- * Button mapping:
- *   button 0 = trigger
- *   button 3 = center servo (used for steering)
- *   button 7  = drive_all (all velocity, normal driving)
- *   button 8  = drive_rear_assist (rear vel + front current)
- *   button 9  = drive_front_nudge (rear hold + front current nudge)
- *   button 10 = drive_front_only (rear hold + front velocity)
- *   button 11 = drive_rear_only (rear velocity + front hold)
+ * Mode-to-button mapping is read entirely from YAML parameters:
+ *   mode_names:   ["drive_all", "drive_rear_assist", "drive_pivot_left", ...]
+ *   mode_buttons: [7, 8, 4, ...]
+ *
+ * To add a new mode:
+ *   1. Add the behavior in drive_modes.cpp
+ *   2. Add the name + button number to YAML
+ *   No C++ changes needed here.
  */
 
 #include <rclcpp/rclcpp.hpp>
@@ -35,7 +35,7 @@ public:
     JoyMapperNode()
     : Node("joy_mapper_node")
     {
-        // Declare parameters
+        // ── Standard parameters ──
         this->declare_parameter("deadzone", 0.15);
         this->declare_parameter("max_linear_speed", 1.0);
         this->declare_parameter("max_angular_speed", 1.0);
@@ -43,14 +43,11 @@ public:
         this->declare_parameter("axis_angular", 2);
         this->declare_parameter("enable_button", -1);
 
-        // Drive mode button assignments (Extreme 3D Pro has buttons 0-11)
-        this->declare_parameter("button_drive_pivot_left", 4);
-        this->declare_parameter("button_drive_pivot_right", 5);
-        this->declare_parameter("button_drive_all", 7);
-        this->declare_parameter("button_drive_rear_assist", 8);
-        this->declare_parameter("button_drive_front_nudge", 9);
-        this->declare_parameter("button_drive_front_only", 10);
-        this->declare_parameter("button_drive_rear_only", 11);
+        // ── Mode mapping from YAML ──
+        // Two parallel arrays: mode_names[i] is triggered by mode_buttons[i].
+        // If these aren't set, fall back to empty (no mode buttons).
+        this->declare_parameter("mode_names", std::vector<std::string>{});
+        this->declare_parameter("mode_buttons", std::vector<int64_t>{});
 
         deadzone_          = this->get_parameter("deadzone").as_double();
         max_linear_speed_  = this->get_parameter("max_linear_speed").as_double();
@@ -59,23 +56,26 @@ public:
         axis_angular_      = this->get_parameter("axis_angular").as_int();
         enable_button_     = this->get_parameter("enable_button").as_int();
 
-        // Build mode button table: pairs of (button_index, mode_string)
-        // This avoids repeating the same if-block 5 times
-        auto addMode = [&](const std::string& param, const std::string& mode_name) {
-            int btn = this->get_parameter(param).as_int();
-            if (btn >= 0) {
-                mode_buttons_.push_back({btn, mode_name});
-            }
-        };
-        addMode("button_drive_pivot_left",   "drive_pivot_left");
-        addMode("button_drive_pivot_right",  "drive_pivot_right");
-        addMode("button_drive_all",          "drive_all");
-        addMode("button_drive_rear_assist",  "drive_rear_assist");
-        addMode("button_drive_front_nudge",  "drive_front_nudge");
-        addMode("button_drive_front_only",   "drive_front_only");
-        addMode("button_drive_rear_only",    "drive_rear_only");
+        // Build mode button table from the parallel arrays
+        auto names   = this->get_parameter("mode_names").as_string_array();
+        auto buttons = this->get_parameter("mode_buttons").as_integer_array();
 
-        cmd_pub_ = this->create_publisher<geometry_msgs::msg::Twist>("/cmd_vel", 10);
+        if (names.size() != buttons.size()) {
+            RCLCPP_ERROR(this->get_logger(),
+                "mode_names (%zu) and mode_buttons (%zu) must be the same length!",
+                names.size(), buttons.size());
+        }
+
+        size_t count = std::min(names.size(), buttons.size());
+        for (size_t i = 0; i < count; ++i) {
+            int btn = static_cast<int>(buttons[i]);
+            if (btn >= 0) {
+                mode_buttons_.push_back({btn, names[i]});
+            }
+        }
+
+        // ── Publishers / Subscribers ──
+        cmd_pub_  = this->create_publisher<geometry_msgs::msg::Twist>("/cmd_vel", 10);
         mode_pub_ = this->create_publisher<std_msgs::msg::String>("/drive_mode", 10);
 
         joy_sub_ = this->create_subscription<sensor_msgs::msg::Joy>(
@@ -86,13 +86,16 @@ public:
         for (const auto& [btn, name] : mode_buttons_) {
             RCLCPP_INFO(this->get_logger(), "  Button %d → %s", btn, name.c_str());
         }
+        if (mode_buttons_.empty()) {
+            RCLCPP_WARN(this->get_logger(),
+                "No mode buttons configured. Set mode_names and mode_buttons in YAML.");
+        }
     }
 
 private:
     double applyDeadzone(double val) const
     {
         if (std::abs(val) < deadzone_) return 0.0;
-        // Rescale so output starts from 0 after deadzone
         double sign = (val > 0) ? 1.0 : -1.0;
         return sign * (std::abs(val) - deadzone_) / (1.0 - deadzone_);
     }
@@ -100,7 +103,6 @@ private:
     void joyCallback(const sensor_msgs::msg::Joy::SharedPtr msg)
     {
         // ── Drive mode buttons ──
-        // Check all registered mode buttons. If pressed, publish the mode string.
         for (const auto& [btn, mode_name] : mode_buttons_) {
             if (btn < static_cast<int>(msg->buttons.size()) && msg->buttons[btn]) {
                 auto mode_msg = std_msgs::msg::String();
@@ -111,8 +113,6 @@ private:
         }
 
         // ── Deadman switch check ──
-        // If enable_button is set (>= 0), the button must be held for commands to pass.
-        // If not held, publish zero velocity and skip axis reading.
         if (enable_button_ >= 0) {
             if (enable_button_ >= static_cast<int>(msg->buttons.size()) ||
                 !msg->buttons[enable_button_])
@@ -127,7 +127,6 @@ private:
         double linear = 0.0, angular = 0.0;
 
         if (axis_linear_ < static_cast<int>(msg->axes.size())) {
-            // Invert Y axis — push forward gives negative raw value
             linear = -applyDeadzone(msg->axes[axis_linear_]) * max_linear_speed_;
         }
 
@@ -149,7 +148,7 @@ private:
     int axis_angular_;
     int enable_button_;
 
-    // Mode button table: each entry is (button_index, mode_string_to_publish)
+    // Mode button table: built from YAML, each entry is (button_index, mode_name)
     std::vector<std::pair<int, std::string>> mode_buttons_;
 
     // ROS2

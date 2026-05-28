@@ -18,7 +18,7 @@ import os
 
 def generate_launch_description():
     pkg_dir = get_package_share_directory('dynamixel_driver')
-    motor_params = os.path.join(pkg_dir, 'config', 'motor_params.yaml')
+    robot_params = os.path.join(pkg_dir, 'config', 'robot_params.yaml')
 
     return LaunchDescription([
         DeclareLaunchArgument(
@@ -47,6 +47,6 @@ def generate_launch_description():
             executable='dynamixel_driver_node',
             name='dynamixel_driver_node',
             output='screen',
-            parameters=[motor_params],
+            parameters=[robot_params],
         ),
     ])

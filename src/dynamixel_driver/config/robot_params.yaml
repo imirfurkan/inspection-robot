@@ -1,0 +1,79 @@
+# ═══════════════════════════════════════════════════════════════
+# robot_params.yaml
+# ═══════════════════════════════════════════════════════════════
+#
+# HOW TO ADD A NEW MODE:
+#   1. Add the mode behavior in drive_modes.cpp  (what each motor does)
+#   2. Add the mode name + button number below   (how the joystick triggers it)
+#   That's it. No C++ changes to either node.
+#
+
+# ── Dynamixel Driver Node ──────────────────────────────────────
+dynamixel_driver_node:
+  ros__parameters:
+    # U2D2 serial port (check with: ls /dev/ttyUSB*)
+    port_name: "/dev/ttyUSB0"
+    baudrate: 57600
+
+    # Motor IDs — 4x Dynamixel XH540-W140-R
+    motor_ids: [1, 6, 8, 10]
+
+    # Motor layout (looking from the front)
+    front_left_id: 10
+    front_right_id: 6
+    rear_left_id: 1
+    rear_right_id: 8
+
+    # Motors that need their velocity/current negated for forward motion
+    reverse_ids: [1, 10]
+
+    # Velocity limits (Dynamixel unit: ~0.229 RPM per unit)
+    # Max rpm: 67 rpm at 11.1V → 67 / 0.229 = 292 units
+    max_velocity: 218       # conservative limit at ~50 rpm
+    deadzone: 0.15          # joystick deadzone (0.0 - 1.0)
+
+    # Max current for current-controlled wheels (milliamps)
+    # XH540-W140-R stall current is ~4200 mA. At 50 RPM ~1.4A.
+    max_current_ma: 400.0   # yer icin buldugumuz deger 62
+
+    # Control loop rate (Hz)
+    loop_rate: 50.0
+
+    # Default drive mode on startup
+    default_mode: "drive_all"
+
+# ── Joy Mapper Node ───────────────────────────────────────────
+joy_mapper_node:
+  ros__parameters:
+    deadzone: 0.15
+    max_linear_speed: 1.0
+    max_angular_speed: 1.0
+    axis_linear: 1          # stick Y (inverted in code)
+    axis_angular: 2         # stick twist Z
+    enable_button: -1       # -1 = no deadman switch
+
+    # ── Mode-to-button mapping ──
+    # Parallel arrays: mode_names[i] fires on mode_buttons[i].
+    # Logitech Extreme 3D Pro has buttons 0-11.
+    #
+    # To add a mode, append to both lists:
+    #   mode_names:   [..., "my_new_mode"]
+    #   mode_buttons: [..., 6]
+    #
+    mode_names:
+      - "drive_all"           # all velocity, normal driving
+      - "drive_rear_assist"   # rear vel + front current
+      - "drive_front_nudge"   # rear hold + front current nudge
+      - "drive_front_only"    # rear hold + front velocity
+      - "drive_rear_only"     # rear velocity + front hold
+      - "drive_pivot_left"    # rear-left hold, rear-right vel, front current
+      - "drive_pivot_right"   # rear-right hold, rear-left vel, front current
+
+    mode_buttons:
+      - 7                     # drive_all
+      - 8                     # drive_rear_assist
+      - 9                     # drive_front_nudge
+      - 10                    # drive_front_only
+      - 11                    # drive_rear_only
+      - 4                     # drive_pivot_left
+      - 5                     # drive_pivot_right
