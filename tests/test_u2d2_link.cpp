@@ -28,7 +28,7 @@
  *
  * Usage:
  *   sudo ./test_u2d2_link
- *   sudo ./test_u2d2_link /dev/ttyUSB1    # specify port
+ *   sudo ./test_u2d2_link /dev/ttyUSB0    # specify port
  */
 
 #include <iostream>
