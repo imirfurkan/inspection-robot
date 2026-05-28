@@ -19,7 +19,7 @@
  *
  * Usage:
  *   sudo ./test_dynamixel
- *   sudo ./test_dynamixel /dev/ttyUSB1    # specify port
+ *   sudo ./test_dynamixel /dev/ttyUSB0    # specify port
  */
 
 #include <iostream>
