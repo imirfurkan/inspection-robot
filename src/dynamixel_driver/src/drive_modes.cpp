@@ -137,7 +137,7 @@ std::map<std::string, DriveModeDef> buildDefaultModes(const MotorLayout& m)
         .forward_profile = {
             {FL, {ControlType::VELOCITY,  0.85f}},
             {FR, {ControlType::VELOCITY,  1.0f}},
-            {RL, {ControlType::HOLD,     0.0f}}, // 0.785
+            {RL, {ControlType::VELOCITY,  0.79f}}, // 0.785
             {RR, {ControlType::VELOCITY, 0.94f}},
         },
         .reverse_profile = {
@@ -148,7 +148,7 @@ std::map<std::string, DriveModeDef> buildDefaultModes(const MotorLayout& m)
             // For now, mirrors forward.
             {FL, {ControlType::VELOCITY,  0.85f}},
             {FR, {ControlType::VELOCITY,  1.0f}},
-            {RL, {ControlType::HOLD,     0.0f}},
+            {RL, {ControlType::VELOCITY,  0.79f}},
             {RR, {ControlType::VELOCITY, 0.94f}},
         }
     };
@@ -166,7 +166,7 @@ std::map<std::string, DriveModeDef> buildDefaultModes(const MotorLayout& m)
             {FL, {ControlType::VELOCITY,  1.0f}},
             {FR, {ControlType::VELOCITY,  0.85f}},
             {RL, {ControlType::VELOCITY, 0.94f}},
-            {RR, {ControlType::HOLD,     0.0f}},
+            {RR, {ControlType::VELOCITY,     0.79f}},
         },
         .reverse_profile = {
             // TODO: your described reverse behavior would be:
@@ -178,7 +178,7 @@ std::map<std::string, DriveModeDef> buildDefaultModes(const MotorLayout& m)
             {FL, {ControlType::VELOCITY,  1.0f}},
             {FR, {ControlType::VELOCITY,  0.85f}},
             {RL, {ControlType::VELOCITY, 0.94f}},
-            {RR, {ControlType::HOLD,     0.0f}},
+            {RR, {ControlType::VELOCITY,  0.79f}},
         }
     };
 

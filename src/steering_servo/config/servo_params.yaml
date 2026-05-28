@@ -22,7 +22,7 @@ steering_servo_node:
 
     # Proportional steering (axis 0 stick X) — experimental
     axis_proportional: 0
-    proportional_deadzone: 0.1    # joystick deadzone (0.0–1.0)
+    proportional_deadzone: 0.2    # joystick deadzone (0.0–1.0) TODO tune
     angle_deadband: 2.0           # ignore angle changes smaller than this (degrees)
                                   #  increase if servo still jitters, decrease if it feels sluggish
     slew_rate_deg: 5.0            # max degrees per update step

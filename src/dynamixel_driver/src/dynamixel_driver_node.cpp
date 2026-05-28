@@ -337,12 +337,7 @@ private:
             MotorCommand cmd = getCommand(profile, id);
             int sign = reverse_ids_.count(id) ? -1 : 1;
             
-            RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
-            "Motor %d: profile=%s, cmd_type=%d, op_mode=%d",
-            id, going_forward_ ? "FWD" : "REV",
-            static_cast<int>(cmd.type),
-            current_op_mode_.count(id) ? current_op_mode_[id] : -1);
-
+        
             switch (cmd.type) {
                 case ControlType::VELOCITY: {
                     int32_t vel = static_cast<int32_t>(clamped * cmd.k * max_velocity_);

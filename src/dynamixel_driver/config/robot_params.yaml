@@ -43,7 +43,7 @@ dynamixel_driver_node:
     default_mode: "drive_all"
 
     # rate limiting velocity
-    max_accel_per_tick: 10    # max velocity change per control loop tick
+    max_accel_per_tick: 2    # max velocity change per control loop tick
     # So max_accel_per_tick: 10 means each tick (20ms at 50Hz) the motor speed can change by at most 10 × 0.229 = 2.29 RPM per tick.
     # Per second that's 2.29 × 50 = 114.5 RPM/sec acceleration rate.
     # Your max_velocity is 218 units = ~50 RPM. So 0 to full speed takes 50 / 114.5 = ~0.44 seconds.
