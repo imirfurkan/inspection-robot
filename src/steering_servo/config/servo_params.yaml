@@ -6,7 +6,7 @@ steering_servo_node:
     pwm_channel: 0          # PWM0 = GPIO 12
 
     # DS3235-180 servo range
-    servo_min_deg: 10.0      # physical hard-stop left
+    servo_min_deg: 20.0      # physical hard-stop left
     servo_max_deg: 162.0     # physical hard-stop right
     servo_center_deg: 90.0   # straight ahead
 
