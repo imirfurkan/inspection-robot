@@ -42,6 +42,10 @@ dynamixel_driver_node:
     # Default drive mode on startup
     default_mode: "drive_all"
 
+    # rate limiting velocity
+    max_accel_per_tick: 10    # max velocity change per control loop tick
+
+
 # ── Joy Mapper Node ───────────────────────────────────────────
 joy_mapper_node:
   ros__parameters:
