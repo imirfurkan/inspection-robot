@@ -23,6 +23,7 @@ from camera_driver.shared_state import (
 )
 import camera_driver.shared_state as state
 from camera_driver.dashboard.template import DASHBOARD_HTML
+import logging
 
 
 # ═══════════════════════════════════════════════════════
@@ -77,6 +78,7 @@ def mjpeg_both():
 # ═══════════════════════════════════════════════════════
 
 flask_app = Flask(__name__)
+logging.getLogger('werkzeug').setLevel(logging.WARNING)
 
 
 @flask_app.route("/")
