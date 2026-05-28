@@ -19,3 +19,13 @@ steering_servo_node:
     steer_threshold: 0.8     # axis value to trigger steer (0.0–1.0)
     axis_steer: 2            # joystick axis for steering (twist)
     button_center: 3         # button to center servo
+
+    # Proportional steering (axis 0 stick X) — experimental
+    axis_proportional: 0
+    proportional_deadzone: 0.1    # joystick deadzone (0.0–1.0)
+    angle_deadband: 2.0           # ignore angle changes smaller than this (degrees)
+                                  #  increase if servo still jitters, decrease if it feels sluggish
+    slew_rate_deg: 5.0            # max degrees per update step
+                                  # increase for faster response, decrease for smoother movement
+    update_interval_ms: 50        # min milliseconds between servo commands
+                                  # decrease for more responsive (20ms = very responsive), increase for more relaxed

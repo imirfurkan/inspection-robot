@@ -394,6 +394,84 @@ DASHBOARD_HTML = """
       text-align: right; margin-top: 2px;
     }
 
+    /* ─── POSITION STATE ─── */
+    .position-display {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .position-current {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px;
+      background: var(--bg-raised);
+      border-radius: 6px;
+      border: 1px solid var(--border);
+    }
+    .position-label-big {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 18px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      flex: 1;
+    }
+    .position-pitch {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13px;
+      color: var(--text-secondary);
+    }
+    .position-indicator {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .position-ranges {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .position-range-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 5px 8px;
+      border-radius: 4px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      color: var(--text-muted);
+      background: var(--bg-base);
+      border: 1px solid transparent;
+      transition: all 0.15s;
+    }
+    .position-range-row.active {
+      color: var(--text-primary);
+      border-color: var(--robot-ops);
+      background: rgba(34, 197, 94, 0.08);
+    }
+    .position-range-dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: var(--border);
+      flex-shrink: 0;
+      transition: background 0.15s;
+    }
+    .position-range-row.active .position-range-dot {
+      background: var(--robot-ops);
+      box-shadow: 0 0 4px var(--robot-ops);
+    }
+    .position-range-label {
+      flex: 1;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .position-range-deg {
+      color: var(--text-muted);
+      font-size: 10px;
+    }
+
     /* ─── RESPONSIVE ─── */
     @media (max-width: 900px) {
       .layout { flex-direction: column; }
@@ -828,6 +906,21 @@ DASHBOARD_HTML = """
         <!-- ════ ROBOT OPS TAB ════ -->
         <div class="tab-pane" id="pane-robot">
 
+          <!-- ──── POSITION STATE ──── -->
+          <div class="section">
+            <div class="section-title robot">Robot Position</div>
+            <div class="position-display">
+              <div class="position-current">
+                <span class="position-indicator" id="pos-indicator" style="background: var(--text-muted)"></span>
+                <span class="position-label-big" id="pos-label">UNKNOWN</span>
+                <span class="position-pitch" id="pos-pitch">0.0°</span>
+              </div>
+              <div class="position-ranges" id="pos-ranges">
+                <!-- Populated dynamically from /api/position -->
+              </div>
+            </div>
+          </div>
+
           <div class="section">
             <div class="section-title robot">IMU — Accelerometer</div>
             <div class="imu-grid">
@@ -1093,6 +1186,66 @@ DASHBOARD_HTML = """
     function resetIMU() {
       fetch(FRONT_BASE + '/api/imu/reset', {method: 'POST'});
     }
+
+    // ── Position state polling ──
+    let _posRangesBuilt = false;
+    let _lastPosLabel = '';
+
+    function pollPosition() {
+      const robotPane = document.getElementById('pane-robot');
+      if (!robotPane || !robotPane.classList.contains('active')) return;
+
+      fetch(FRONT_BASE + '/api/position').then(r => r.json()).then(d => {
+        const label = d.label || 'unknown';
+        const pitch = d.pitch || 0;
+
+        // Update the big label and pitch value
+        document.getElementById('pos-label').textContent = label.toUpperCase();
+        document.getElementById('pos-pitch').textContent = pitch.toFixed(1) + '°';
+
+        // Color the indicator based on state
+        const indicator = document.getElementById('pos-indicator');
+        if (label === 'unknown') {
+          indicator.style.background = 'var(--text-muted)';
+        } else {
+          indicator.style.background = 'var(--robot-ops)';
+          indicator.style.boxShadow = '0 0 6px var(--robot-ops)';
+        }
+
+        // Build range rows once (from server-provided ranges)
+        if (!_posRangesBuilt && d.ranges && d.ranges.length > 0) {
+          const container = document.getElementById('pos-ranges');
+          container.innerHTML = '';
+          d.ranges.forEach(r => {
+            const row = document.createElement('div');
+            row.className = 'position-range-row';
+            row.dataset.label = r.label;
+            row.innerHTML =
+              '<span class="position-range-dot"></span>' +
+              '<span class="position-range-label">' + r.label + '</span>' +
+              '<span class="position-range-deg">' + r.min.toFixed(0) + '°–' + r.max.toFixed(0) + '°</span>';
+            container.appendChild(row);
+          });
+          _posRangesBuilt = true;
+        }
+
+        // Highlight the active range row
+        if (_posRangesBuilt) {
+          document.querySelectorAll('.position-range-row').forEach(row => {
+            if (row.dataset.label === label) {
+              row.classList.add('active');
+            } else {
+              row.classList.remove('active');
+            }
+          });
+        }
+
+        _lastPosLabel = label;
+      }).catch(() => {});
+    }
+
+    // Poll position at 5Hz (matches IMU update, doesn't need to be faster)
+    setInterval(pollPosition, 200);
   </script>
 </body>
 </html>

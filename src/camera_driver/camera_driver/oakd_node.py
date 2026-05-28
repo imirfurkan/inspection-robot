@@ -10,6 +10,10 @@ Three simultaneous outputs from the same pipeline:
   2. Video (high-res)   → hardware H.265 encoder → disk recording
   3. Stereo depth       → colorized depth map → dashboard
 
+Position classifier:
+  Uses IMU pitch to publish the robot's orientation state on /robot_position.
+  Thresholds and labels are configurable via ROS2 parameters.
+
 Usage:
   ros2 launch camera_driver oakd.launch.py
   ros2 run camera_driver oakd_node
@@ -32,6 +36,7 @@ except ImportError:
 
 import rclpy
 from rclpy.node import Node as RosNode
+from std_msgs.msg import String
 
 from camera_driver.shared_state import (
     frame_lock, current_frames,
@@ -39,6 +44,7 @@ from camera_driver.shared_state import (
     imu_lock, imu_data,
     recording_lock,
     pipeline_stop, pipeline_restart, controls_dirty,
+    position_lock, position_state, position_ranges,
 )
 import camera_driver.shared_state as state
 
@@ -241,18 +247,32 @@ def apply_ir_controls(device, cfg):
 
 
 # ═══════════════════════════════════════════════════════
+# Position classifier
+# ═══════════════════════════════════════════════════════
+
+def classify_position(pitch_deg):
+    """Classify absolute pitch into a named position state.
+
+    Uses the position_ranges table from shared_state.
+    Returns the label string, or 'unknown' if no range matches.
+    """
+    abs_pitch = abs(pitch_deg)
+    for (min_deg, max_deg, label) in position_ranges:
+        if min_deg <= abs_pitch < max_deg:
+            return label
+    return "unknown"
+
+
+# ═══════════════════════════════════════════════════════
 # Pipeline worker thread
 # ═══════════════════════════════════════════════════════
 
 def pipeline_worker(ros_node):
     """Runs the DepthAI pipeline and updates shared frame buffers."""
 
-    # [FUTURE] Uncomment for ROS2 image publishing
-    # bridge = CvBridge()
-    # rgb_pub = ros_node.create_publisher(Image, '/camera/front/rgb', 10)
-    # depth_pub = ros_node.create_publisher(Image, '/camera/front/depth', 10)
-    # compressed_pub = ros_node.create_publisher(
-    #     CompressedImage, '/camera/front/rgb/compressed', 10)
+    # Position publisher (std_msgs/String on /robot_position)
+    position_pub = ros_node.create_publisher(String, '/robot_position', 10)
+    _last_position_label = ""
 
     while not pipeline_stop.is_set():
         pipeline_restart.clear()
@@ -337,23 +357,6 @@ def pipeline_worker(ros_node):
                     with frame_lock:
                         current_frames["rgb"] = frame_bgr
 
-                    # [FUTURE] Publish to ROS2
-                    # if rgb_pub.get_subscription_count() > 0:
-                    #     msg = bridge.cv2_to_imgmsg(frame_bgr, encoding="bgr8")
-                    #     msg.header.stamp = ros_node.get_clock().now().to_msg()
-                    #     msg.header.frame_id = "oakd_rgb_optical_frame"
-                    #     rgb_pub.publish(msg)
-                    #
-                    # if compressed_pub.get_subscription_count() > 0:
-                    #     comp_msg = CompressedImage()
-                    #     comp_msg.header.stamp = ros_node.get_clock().now().to_msg()
-                    #     comp_msg.header.frame_id = "oakd_rgb_optical_frame"
-                    #     comp_msg.format = "jpeg"
-                    #     _, buf = cv2.imencode('.jpg', frame_bgr,
-                    #                          [cv2.IMWRITE_JPEG_QUALITY, 80])
-                    #     comp_msg.data = buf.tobytes()
-                    #     compressed_pub.publish(comp_msg)
-
                 # ── Depth frame ──
                 if q_depth is not None:
                     depth_pkt = q_depth.tryGet()
@@ -363,13 +366,6 @@ def pipeline_worker(ros_node):
                         disp_color = cv2.applyColorMap(disp_norm, cv2.COLORMAP_JET)
                         with frame_lock:
                             current_frames["depth"] = disp_color
-
-                        # [FUTURE] Publish depth to ROS2
-                        # if depth_pub.get_subscription_count() > 0:
-                        #     depth_msg = bridge.cv2_to_imgmsg(disp, encoding="mono16")
-                        #     depth_msg.header.stamp = ros_node.get_clock().now().to_msg()
-                        #     depth_msg.header.frame_id = "oakd_stereo_optical_frame"
-                        #     depth_pub.publish(depth_msg)
 
                 # ── H.265 encoded stream ──
                 h265_pkt = q_h265.tryGet()
@@ -404,13 +400,10 @@ def pipeline_worker(ros_node):
                                 qi, qj, qk, qr = rv.i, rv.j, rv.k, rv.real
 
                                 if state.imu_ref_set:
-                                    # q_rel = q_ref_inv * q_current
-                                    # Inverse of unit quaternion: negate i,j,k
                                     ri = -state.imu_ref_quat["i"]
                                     rj = -state.imu_ref_quat["j"]
                                     rk = -state.imu_ref_quat["k"]
                                     rr = state.imu_ref_quat["real"]
-                                    # Quaternion multiplication: ref_inv * current
                                     qi2 = rr*qi + ri*qr + rj*qk - rk*qj
                                     qj2 = rr*qj - ri*qk + rj*qr + rk*qi
                                     qk2 = rr*qk + ri*qj - rj*qi + rk*qr
@@ -437,6 +430,25 @@ def pipeline_worker(ros_node):
                                 imu_data["orientation"]["yaw"] = round(sensor_pitch, 1)
 
                                 imu_data["timestamp"] = time.time()
+
+                            # ── Position classification ──
+                            current_pitch = imu_data["orientation"]["pitch"]
+                            label = classify_position(current_pitch)
+                            now = time.time()
+
+                            with position_lock:
+                                position_state["label"] = label
+                                position_state["pitch"] = current_pitch
+                                position_state["timestamp"] = now
+
+                            # Publish on /robot_position (only on state change)
+                            if label != _last_position_label:
+                                pos_msg = String()
+                                pos_msg.data = label
+                                position_pub.publish(pos_msg)
+                                ros_node.get_logger().info(
+                                    f"Position: {label} (pitch={current_pitch:.1f}°)")
+                                _last_position_label = label
 
                 # ── Live controls (only when changed) ──
                 if controls_dirty.is_set():
@@ -552,6 +564,43 @@ class OakDNode(RosNode):
                 value = self.get_parameter(key).value
                 current_config[key] = value
 
+        # ── Position classifier parameters ──
+        # Two parallel arrays define the pitch ranges and their labels.
+        # position_thresholds: [0, 5, 15, 35, 80, 90]
+        #   → ranges are [0,5), [5,15), [15,35), [35,80), [80,90)
+        # position_labels: ["horizontal", "buckling", "transitional", "inclined", "vertical"]
+        #   → len(labels) must equal len(thresholds) - 1
+        self.declare_parameter(
+            "position_thresholds",
+            [0.0, 5.0, 15.0, 35.0, 80.0, 90.0])
+        self.declare_parameter(
+            "position_labels",
+            ["horizontal", "buckling", "transitional", "inclined", "vertical"])
+
+        thresholds = self.get_parameter("position_thresholds").value
+        labels = self.get_parameter("position_labels").value
+
+        if len(labels) != len(thresholds) - 1:
+            self.get_logger().error(
+                f"position_labels ({len(labels)}) must be exactly "
+                f"position_thresholds ({len(thresholds)}) - 1!")
+            self.get_logger().warn("Using default position ranges.")
+            thresholds = [0.0, 5.0, 15.0, 35.0, 80.0, 90.0]
+            labels = ["horizontal", "buckling", "transitional", "inclined", "vertical"]
+
+        # Build the classifier table
+        ranges = []
+        for i in range(len(labels)):
+            ranges.append((thresholds[i], thresholds[i + 1], labels[i]))
+
+        # Write to shared state (read by classify_position)
+        position_ranges.clear()
+        position_ranges.extend(ranges)
+
+        self.get_logger().info("Position classifier ranges:")
+        for (lo, hi, lbl) in ranges:
+            self.get_logger().info(f"  {lo:5.1f}° – {hi:5.1f}° → {lbl}")
+
     def _print_endpoints(self, port):
         ip_hints = []
         try:
@@ -577,6 +626,7 @@ class OakDNode(RosNode):
         self.get_logger().info("=" * 50)
         for iface, ip in ip_hints:
             self.get_logger().info(f"  [{iface}] http://{ip}:{port}/")
+        self.get_logger().info(f"  Publishing /robot_position (String)")
         self.get_logger().info("=" * 50)
 
 

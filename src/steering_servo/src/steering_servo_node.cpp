@@ -4,11 +4,18 @@
  * Subscribes to /joy (sensor_msgs/Joy) directly
  * Drives a DS3235-180 servo via Raspberry Pi 5 hardware PWM
  *
- * Discrete steering logic:
- *   Axis 2 (twist) > +0.8  → snap to full right (162°), latches
- *   Axis 2 (twist) < -0.8  → snap to full left (10°), latches
- *   Button 3               → snap to center (90°)
- *   Between -0.8 and +0.8  → do nothing, hold current position
+ * TWO steering modes on separate axes:
+ *
+ * Axis 2 (twist) — DISCRETE:
+ *   > +0.8  → snap to full right (162°), latches
+ *   < -0.8  → snap to full left (10°), latches
+ *   Button 3 → snap to center (90°)
+ *
+ * Axis 0 (stick X) — PROPORTIONAL (experimental):
+ *   Maps -1.0..+1.0 proportionally to servo range
+ *   Rate-limited: commands sent at most every 50ms
+ *   Slew-limited: max 5° change per update (prevents slamming)
+ *   Deadband: ignores changes < 2° (prevents chasing jitter)
  *
  * DS3235-180 specs:
  *   500µs  = 0°,  1500µs = 90° (center),  2500µs = 180°
@@ -19,8 +26,6 @@
  *
  * Requires dtoverlay=pwm in /boot/firmware/config.txt:
  *   dtoverlay=pwm,pin=12,func=4
- *
- * Docker must have --privileged for /sys/class/pwm access.
  */
 
 #include <rclcpp/rclcpp.hpp>
@@ -44,16 +49,25 @@ public:
     {
         // Declare parameters
         this->declare_parameter("pwm_chip", 0);
-        this->declare_parameter("pwm_channel", 0);       // PWM0 = GPIO 12
-        this->declare_parameter("servo_min_deg", 10.0);   // physical hard-stop left
-        this->declare_parameter("servo_max_deg", 162.0);  // physical hard-stop right
+        this->declare_parameter("pwm_channel", 0);
+        this->declare_parameter("servo_min_deg", 10.0);
+        this->declare_parameter("servo_max_deg", 162.0);
         this->declare_parameter("servo_center_deg", 90.0);
-        this->declare_parameter("pulse_min_us", 500);     // 0°
-        this->declare_parameter("pulse_max_us", 2500);    // 180°
-        this->declare_parameter("period_ns", 20000000);   // 50 Hz
-        this->declare_parameter("steer_threshold", 0.8);  // axis threshold for discrete steer
-        this->declare_parameter("axis_steer", 2);         // joystick axis for steering
-        this->declare_parameter("button_center", 3);      // button to center servo
+        this->declare_parameter("pulse_min_us", 500);
+        this->declare_parameter("pulse_max_us", 2500);
+        this->declare_parameter("period_ns", 20000000);
+
+        // Discrete steering (axis 2)
+        this->declare_parameter("steer_threshold", 0.8);
+        this->declare_parameter("axis_steer", 2);
+        this->declare_parameter("button_center", 3);
+
+        // Proportional steering (axis 0) — experimental
+        this->declare_parameter("axis_proportional", 0);
+        this->declare_parameter("proportional_deadzone", 0.1);   // joystick deadzone
+        this->declare_parameter("angle_deadband", 2.0);          // ignore changes < 2°
+        this->declare_parameter("slew_rate_deg", 5.0);           // max degrees per update
+        this->declare_parameter("update_interval_ms", 50);       // min ms between commands
 
         // Read parameters
         pwm_chip_       = this->get_parameter("pwm_chip").as_int();
@@ -67,6 +81,12 @@ public:
         steer_threshold_ = this->get_parameter("steer_threshold").as_double();
         axis_steer_     = this->get_parameter("axis_steer").as_int();
         button_center_  = this->get_parameter("button_center").as_int();
+
+        axis_proportional_    = this->get_parameter("axis_proportional").as_int();
+        proportional_deadzone_ = this->get_parameter("proportional_deadzone").as_double();
+        angle_deadband_       = this->get_parameter("angle_deadband").as_double();
+        slew_rate_deg_        = this->get_parameter("slew_rate_deg").as_double();
+        update_interval_ms_   = this->get_parameter("update_interval_ms").as_int();
 
         // Build sysfs path
         pwm_path_ = "/sys/class/pwm/pwmchip" + std::to_string(pwm_chip_) +
@@ -83,14 +103,18 @@ public:
             RCLCPP_INFO(this->get_logger(), "Servo centered at %.1f°", servo_center_);
         }
 
-        // Subscribe to /joy directly (need button data for centering)
+        // Subscribe to /joy
         joy_sub_ = this->create_subscription<sensor_msgs::msg::Joy>(
             "/joy", 10,
             std::bind(&SteeringServoNode::joyCallback, this, std::placeholders::_1));
 
+        last_proportional_update_ = std::chrono::steady_clock::now();
+
         RCLCPP_INFO(this->get_logger(),
-            "Steering servo started — pwmchip%d/pwm%d range:[%.0f°–%.0f°] center:%.0f° threshold:%.1f",
-            pwm_chip_, pwm_channel_, servo_min_deg_, servo_max_deg_, servo_center_, steer_threshold_);
+            "Steering servo started — discrete:axis[%d] proportional:axis[%d] "
+            "range:[%.0f°–%.0f°] center:%.0f°",
+            axis_steer_, axis_proportional_,
+            servo_min_deg_, servo_max_deg_, servo_center_);
     }
 
     ~SteeringServoNode()
@@ -123,21 +147,15 @@ private:
             }
         }
 
-        if (!writeSysfs(pwm_path_ + "period", std::to_string(period_ns_))) {
-            RCLCPP_ERROR(this->get_logger(), "Cannot set PWM period");
+        if (!writeSysfs(pwm_path_ + "period", std::to_string(period_ns_)))
             return false;
-        }
 
         int center_ns = degreesToNs(servo_center_);
-        if (!writeSysfs(pwm_path_ + "duty_cycle", std::to_string(center_ns))) {
-            RCLCPP_ERROR(this->get_logger(), "Cannot set PWM duty_cycle");
+        if (!writeSysfs(pwm_path_ + "duty_cycle", std::to_string(center_ns)))
             return false;
-        }
 
-        if (!writeSysfs(pwm_path_ + "enable", "1")) {
-            RCLCPP_ERROR(this->get_logger(), "Cannot enable PWM");
+        if (!writeSysfs(pwm_path_ + "enable", "1"))
             return false;
-        }
 
         pwm_initialized_ = true;
         RCLCPP_INFO(this->get_logger(), "Hardware PWM initialized at %s", pwm_path_.c_str());
@@ -179,17 +197,19 @@ private:
         current_angle_ = degrees;
     }
 
+    double applyJoystickDeadzone(double value)
+    {
+        if (std::abs(value) < proportional_deadzone_) return 0.0;
+        double sign = (value > 0) ? 1.0 : -1.0;
+        return sign * (std::abs(value) - proportional_deadzone_) / (1.0 - proportional_deadzone_);
+    }
+
     // ─── ROS callback ─────────────────────────────────────────────
     void joyCallback(const sensor_msgs::msg::Joy::SharedPtr msg)
     {
         if (!pwm_initialized_) return;
 
-        // Check array bounds
-        if (msg->axes.size() <= static_cast<size_t>(axis_steer_)) return;
-
-        double twist_val = msg->axes[axis_steer_];
-
-        // Button 3: center the servo
+        // === Button 3: center servo (overrides everything) ===
         if (msg->buttons.size() > static_cast<size_t>(button_center_) &&
             msg->buttons[button_center_] == 1) {
             setServoDegrees(servo_center_);
@@ -199,26 +219,63 @@ private:
             return;
         }
 
-        // Discrete steering: trigger once when threshold is crossed
-        // Steer right: axis > +threshold
-        if (twist_val > steer_threshold_) {
-            if (!steer_triggered_right_) {
-                setServoDegrees(servo_max_deg_);
-                steer_triggered_right_ = true;
-                steer_triggered_left_  = false;
-                RCLCPP_INFO(this->get_logger(), "Steering RIGHT → %.0f°", servo_max_deg_);
+        // === Axis 2 — Discrete steering (unchanged) ===
+        if (msg->axes.size() > static_cast<size_t>(axis_steer_)) {
+            double twist_val = msg->axes[axis_steer_];
+
+            if (twist_val > steer_threshold_) {
+                if (!steer_triggered_right_) {
+                    setServoDegrees(servo_max_deg_);
+                    steer_triggered_right_ = true;
+                    steer_triggered_left_  = false;
+                    RCLCPP_INFO(this->get_logger(), "Discrete RIGHT → %.0f°", servo_max_deg_);
+                    return;  // discrete takes priority this callback
+                }
+            }
+            else if (twist_val < -steer_threshold_) {
+                if (!steer_triggered_left_) {
+                    setServoDegrees(servo_min_deg_);
+                    steer_triggered_left_  = true;
+                    steer_triggered_right_ = false;
+                    RCLCPP_INFO(this->get_logger(), "Discrete LEFT → %.0f°", servo_min_deg_);
+                    return;
+                }
             }
         }
-        // Steer left: axis < -threshold
-        else if (twist_val < -steer_threshold_) {
-            if (!steer_triggered_left_) {
-                setServoDegrees(servo_min_deg_);
-                steer_triggered_left_  = true;
-                steer_triggered_right_ = false;
-                RCLCPP_INFO(this->get_logger(), "Steering LEFT → %.0f°", servo_min_deg_);
-            }
+
+        // === Axis 0 — Proportional steering (experimental) ===
+        if (msg->axes.size() <= static_cast<size_t>(axis_proportional_)) return;
+
+        // Rate-limit: skip if not enough time has passed
+        auto now = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            now - last_proportional_update_).count();
+        if (elapsed < update_interval_ms_) return;
+
+        double stick_val = msg->axes[axis_proportional_];
+
+        // Apply joystick deadzone
+        stick_val = applyJoystickDeadzone(stick_val);
+
+        // Map stick (-1.0..+1.0) to target angle
+        double target_deg;
+        if (stick_val >= 0.0) {
+            target_deg = servo_center_ + stick_val * (servo_max_deg_ - servo_center_);
+        } else {
+            target_deg = servo_center_ + stick_val * (servo_center_ - servo_min_deg_);
         }
-        // Between thresholds: do nothing, servo holds position
+
+        // Deadband: ignore if target is too close to current position
+        if (std::abs(target_deg - current_angle_) < angle_deadband_) return;
+
+        // Slew rate limit: move toward target by at most slew_rate_deg_ per update
+        double diff = target_deg - current_angle_;
+        if (std::abs(diff) > slew_rate_deg_) {
+            target_deg = current_angle_ + ((diff > 0) ? slew_rate_deg_ : -slew_rate_deg_);
+        }
+
+        setServoDegrees(target_deg);
+        last_proportional_update_ = now;
     }
 
     // ─── Members ──────────────────────────────────────────────────
@@ -238,6 +295,14 @@ private:
     int button_center_;
     double current_angle_ = 90.0;
     std::string pwm_path_;
+
+    // Proportional steering
+    int axis_proportional_;
+    double proportional_deadzone_;
+    double angle_deadband_;
+    double slew_rate_deg_;
+    int update_interval_ms_;
+    std::chrono::steady_clock::time_point last_proportional_update_;
 
     rclcpp::Subscription<sensor_msgs::msg::Joy>::SharedPtr joy_sub_;
 };

@@ -54,6 +54,34 @@ imu_ref_set = False
 
 
 # ═══════════════════════════════════════════════════════
+# Robot position state (pitch-based classification)
+# ═══════════════════════════════════════════════════════
+#
+# The position classifier maps absolute pitch ranges to named states.
+# Each entry is (min_deg, max_deg, state_name).
+# Ranges are evaluated in order; first match wins.
+# Configure via ROS2 parameters: position_thresholds and position_labels.
+#
+# Default thresholds (overridable from YAML):
+#   0–5°   → "horizontal"
+#   5–15°  → "buckling"
+#   15–35° → "transitional"
+#   35–80° → "inclined"
+#   80–90° → "vertical"
+
+position_lock = threading.Lock()
+position_state = {
+    "label": "unknown",       # current classified state name
+    "pitch": 0.0,             # pitch value used for classification (absolute)
+    "timestamp": 0,           # time of last update
+}
+
+# The classifier table: list of (min_deg, max_deg, label)
+# Written once at startup by oakd_node, read by the classifier.
+position_ranges = []
+
+
+# ═══════════════════════════════════════════════════════
 # Pipeline control events
 # ═══════════════════════════════════════════════════════
 
