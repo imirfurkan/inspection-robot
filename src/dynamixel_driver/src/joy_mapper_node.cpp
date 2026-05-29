@@ -6,14 +6,19 @@
  * Publishes /drive_mode (std_msgs/String)
  *
  * Logitech Extreme 3D Pro axis mapping:
- *   axis 0 = stick X  (left/right)
+ *   axis 0 = stick X  (left/right)   → proportional steering (servo)
  *   axis 1 = stick Y  (forward/back, INVERTED: push forward = negative)
- *   axis 2 = stick twist Z (rotation)
+ *   axis 2 = stick twist Z (rotation) → tank turn trigger
  *   axis 3 = throttle slider
  *
  * Mode-to-button mapping is read entirely from YAML parameters:
  *   mode_names:   ["drive_all", "drive_rear_assist", "drive_pivot_left", ...]
  *   mode_buttons: [7, 8, 4, ...]
+ *
+ * Tank turn (axis 2):
+ *   > +threshold  → publishes "tank_turn_right" mode, latches
+ *   < -threshold  → publishes "tank_turn_left"  mode, latches
+ *   near zero     → publishes "drive_all" to restore normal driving
  *
  * To add a new mode:
  *   1. Add the behavior in drive_modes.cpp
@@ -43,6 +48,10 @@ public:
         this->declare_parameter("axis_angular", 2);
         this->declare_parameter("enable_button", -1);
 
+        // ── Tank turn parameters ──
+        this->declare_parameter("tank_turn_threshold", 0.5);
+        this->declare_parameter("tank_turn_restore_mode", std::string("drive_all"));
+
         // ── Mode mapping from YAML ──
         // Two parallel arrays: mode_names[i] is triggered by mode_buttons[i].
         // If these aren't set, fall back to empty (no mode buttons).
@@ -55,6 +64,8 @@ public:
         axis_linear_       = this->get_parameter("axis_linear").as_int();
         axis_angular_      = this->get_parameter("axis_angular").as_int();
         enable_button_     = this->get_parameter("enable_button").as_int();
+        tank_threshold_    = this->get_parameter("tank_turn_threshold").as_double();
+        tank_restore_mode_ = this->get_parameter("tank_turn_restore_mode").as_string();
 
         // Build mode button table from the parallel arrays
         auto names   = this->get_parameter("mode_names").as_string_array();
@@ -74,7 +85,6 @@ public:
             }
         }
 
-            
         // ── Publishers / Subscribers ──
         cmd_pub_  = this->create_publisher<geometry_msgs::msg::Twist>("/cmd_vel", 10);
         mode_pub_ = this->create_publisher<std_msgs::msg::String>("/drive_mode", 10);
@@ -91,6 +101,9 @@ public:
             RCLCPP_WARN(this->get_logger(),
                 "No mode buttons configured. Set mode_names and mode_buttons in YAML.");
         }
+        RCLCPP_INFO(this->get_logger(),
+            "Tank turn: axis 2, threshold=%.2f, restores to '%s'",
+            tank_threshold_, tank_restore_mode_.c_str());
     }
 
 private:
@@ -101,15 +114,47 @@ private:
         return sign * (std::abs(val) - deadzone_) / (1.0 - deadzone_);
     }
 
+    void publishMode(const std::string& mode_name)
+    {
+        auto m = std_msgs::msg::String();
+        m.data = mode_name;
+        mode_pub_->publish(m);
+        RCLCPP_INFO(this->get_logger(), "Mode: %s", mode_name.c_str());
+    }
+
     void joyCallback(const sensor_msgs::msg::Joy::SharedPtr msg)
     {
         // ── Drive mode buttons ──
         for (const auto& [btn, mode_name] : mode_buttons_) {
             if (btn < static_cast<int>(msg->buttons.size()) && msg->buttons[btn]) {
-                auto mode_msg = std_msgs::msg::String();
-                mode_msg.data = mode_name;
-                mode_pub_->publish(mode_msg);
-                RCLCPP_INFO(this->get_logger(), "Mode: %s", mode_name.c_str());
+                publishMode(mode_name);
+                // If a mode button is pressed during tank turn, clear tank state
+                tank_active_ = false;
+            }
+        }
+
+        // ── Axis 2 — tank turn ──
+        // Latches into tank_turn_left/right when past threshold.
+        // Returns to tank_restore_mode_ when released back to center.
+        if (msg->axes.size() > 2) {
+            double twist = msg->axes[2];
+            if (twist > tank_threshold_) {
+                if (!tank_active_ || tank_direction_ != 1) {
+                    publishMode("tank_turn_right");
+                    tank_active_    = true;
+                    tank_direction_ = 1;
+                }
+            } else if (twist < -tank_threshold_) {
+                if (!tank_active_ || tank_direction_ != -1) {
+                    publishMode("tank_turn_left");
+                    tank_active_    = true;
+                    tank_direction_ = -1;
+                }
+            } else if (tank_active_) {
+                // Released back to center — restore previous mode
+                publishMode(tank_restore_mode_);
+                tank_active_    = false;
+                tank_direction_ = 0;
             }
         }
 
@@ -148,6 +193,12 @@ private:
     int axis_linear_;
     int axis_angular_;
     int enable_button_;
+    double tank_threshold_;
+    std::string tank_restore_mode_;
+
+    // Tank turn state
+    bool tank_active_    = false;
+    int  tank_direction_ = 0;  // -1 = left, 0 = none, 1 = right
 
     // Mode button table: built from YAML, each entry is (button_index, mode_name)
     std::vector<std::pair<int, std::string>> mode_buttons_;

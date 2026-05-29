@@ -16,8 +16,6 @@ steering_servo_node:
     period_ns: 20000000      # 50 Hz
 
     # Discrete steering control
-    steer_threshold: 0.8     # axis value to trigger steer (0.0–1.0)
-    axis_steer: 2            # joystick axis for steering (twist)
     button_center: 3         # button to center servo
 
     # Proportional steering (axis 0 stick X) — experimental

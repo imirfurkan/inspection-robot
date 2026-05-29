@@ -59,7 +59,8 @@ joy_mapper_node:
     axis_linear: 1          # stick Y (inverted in code)
     axis_angular: 2         # stick twist Z
     enable_button: -1       # -1 = no deadman switch
-
+    tank_turn_threshold: 0.5
+    tank_turn_restore_mode: "drive_all"
     # ── Mode-to-button mapping ──
     # Parallel arrays: mode_names[i] fires on mode_buttons[i].
     # Logitech Extreme 3D Pro has buttons 0-11.
@@ -74,8 +75,6 @@ joy_mapper_node:
       - "drive_front_nudge"   # rear hold + front current nudge
       - "drive_front_only"    # rear hold + front velocity
       - "drive_rear_only"     # rear velocity + front hold
-      - "steer_trial_left"    # steering trial left
-      - "steer_trial_right"   # steering trial right
 
     mode_buttons:
       - 7                     # drive_all
@@ -83,5 +82,3 @@ joy_mapper_node:
       - 9                     # drive_front_nudge
       - 10                    # drive_front_only
       - 11                    # drive_rear_only
-      - 4                     # steer_trial_left
-      - 5                     # steer_trial_right

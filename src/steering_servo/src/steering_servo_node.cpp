@@ -46,8 +46,6 @@ public:
     SteeringServoNode()
     : Node("steering_servo_node"),
       pwm_initialized_(false),
-      steer_triggered_left_(false),
-      steer_triggered_right_(false)
     {
         // Declare parameters
         this->declare_parameter("pwm_chip", 0);
@@ -59,9 +57,6 @@ public:
         this->declare_parameter("pulse_max_us", 2500);
         this->declare_parameter("period_ns", 20000000);
 
-        // Discrete steering (axis 2)
-        this->declare_parameter("steer_threshold", 0.8);
-        this->declare_parameter("axis_steer", 2);
         this->declare_parameter("button_center", 3);
 
         // Proportional steering (axis 0) — experimental
@@ -80,8 +75,6 @@ public:
         pulse_min_us_   = this->get_parameter("pulse_min_us").as_int();
         pulse_max_us_   = this->get_parameter("pulse_max_us").as_int();
         period_ns_      = this->get_parameter("period_ns").as_int();
-        steer_threshold_ = this->get_parameter("steer_threshold").as_double();
-        axis_steer_     = this->get_parameter("axis_steer").as_int();
         button_center_  = this->get_parameter("button_center").as_int();
 
         axis_proportional_    = this->get_parameter("axis_proportional").as_int();
@@ -115,12 +108,6 @@ public:
             std::bind(&SteeringServoNode::joyCallback, this, std::placeholders::_1));
 
         last_proportional_update_ = std::chrono::steady_clock::now();
-
-        RCLCPP_INFO(this->get_logger(),
-            "Steering servo started — discrete:axis[%d] proportional:axis[%d] "
-            "range:[%.0f°–%.0f°] center:%.0f°",
-            axis_steer_, axis_proportional_,
-            servo_min_deg_, servo_max_deg_, servo_center_);
     }
 
     ~SteeringServoNode()
@@ -239,35 +226,33 @@ private:
         if (msg->buttons.size() > static_cast<size_t>(button_center_) &&
             msg->buttons[button_center_] == 1) {
             setServoDegrees(servo_center_);
-            steer_triggered_left_  = false;
-            steer_triggered_right_ = false;
             RCLCPP_INFO(this->get_logger(), "Steering centered (button %d)", button_center_);
             return;
         }
 
-        // === Axis 2 — Discrete steering (unchanged) ===
-        if (msg->axes.size() > static_cast<size_t>(axis_steer_)) {
-            double twist_val = msg->axes[axis_steer_];
+        // // === Axis 2 — Discrete steering (obsolete) ===
+        // if (msg->axes.size() > static_cast<size_t>(axis_steer_)) {
+        //     double twist_val = msg->axes[axis_steer_];
 
-            if (twist_val > steer_threshold_) {
-                if (!steer_triggered_right_) {
-                    setServoDegrees(servo_max_deg_);
-                    steer_triggered_right_ = true;
-                    steer_triggered_left_  = false;
-                    RCLCPP_INFO(this->get_logger(), "Discrete RIGHT → %.0f°", servo_max_deg_);
-                    return;  // discrete takes priority this callback
-                }
-            }
-            else if (twist_val < -steer_threshold_) {
-                if (!steer_triggered_left_) {
-                    setServoDegrees(servo_min_deg_);
-                    steer_triggered_left_  = true;
-                    steer_triggered_right_ = false;
-                    RCLCPP_INFO(this->get_logger(), "Discrete LEFT → %.0f°", servo_min_deg_);
-                    return;
-                }
-            }
-        }
+        //     if (twist_val > steer_threshold_) {
+        //         if (!steer_triggered_right_) {
+        //             setServoDegrees(servo_max_deg_);
+        //             steer_triggered_right_ = true;
+        //             steer_triggered_left_  = false;
+        //             RCLCPP_INFO(this->get_logger(), "Discrete RIGHT → %.0f°", servo_max_deg_);
+        //             return;  // discrete takes priority this callback
+        //         }
+        //     }
+        //     else if (twist_val < -steer_threshold_) {
+        //         if (!steer_triggered_left_) {
+        //             setServoDegrees(servo_min_deg_);
+        //             steer_triggered_left_  = true;
+        //             steer_triggered_right_ = false;
+        //             RCLCPP_INFO(this->get_logger(), "Discrete LEFT → %.0f°", servo_min_deg_);
+        //             return;
+        //         }
+        //     }
+        // }
 
         // === Axis 0 — Proportional steering (experimental) ===
         if (msg->axes.size() <= static_cast<size_t>(axis_proportional_)) return;
@@ -304,8 +289,6 @@ private:
 
     // ─── Members ──────────────────────────────────────────────────
     bool pwm_initialized_;
-    bool steer_triggered_left_;
-    bool steer_triggered_right_;
     int pwm_chip_;
     int pwm_channel_;
     double servo_min_deg_;
@@ -314,8 +297,6 @@ private:
     int pulse_min_us_;
     int pulse_max_us_;
     int period_ns_;
-    double steer_threshold_;
-    int axis_steer_;
     int button_center_;
     double current_angle_ = 90.0;
     std::string pwm_path_;

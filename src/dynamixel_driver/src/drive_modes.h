@@ -27,6 +27,8 @@ enum class ControlType : uint8_t {
 struct MotorCommand {
     ControlType type = ControlType::HOLD;
     float       k    = 0.0f;   // gain multiplier [0.0 – 1.0] applied to max
+    bool        reverse = false;  // flip this motor's direction within the mode
+
 };
 
 // ── A complete drive mode ─────────────────────────────────────

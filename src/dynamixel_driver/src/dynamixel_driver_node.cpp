@@ -444,13 +444,15 @@ private:
 
             switch (cmd.type) {
                 case ControlType::VELOCITY: {
+                    int flip = cmd.reverse ? -1 : 1;
                     int32_t vel = static_cast<int32_t>(clamped * effective_k * max_velocity_);
-                    writeDwordRegister(id, ADDR_GOAL_VELOCITY, vel * sign);
+                    writeDwordRegister(id, ADDR_GOAL_VELOCITY, vel * sign * flip);
                     break;
                 }
                 case ControlType::CURRENT: {
+                    int flip = cmd.reverse ? -1 : 1;
                     int16_t cur = static_cast<int16_t>(clamped * effective_k * max_current_units_);
-                    writeWordRegister(id, ADDR_GOAL_CURRENT, static_cast<int16_t>(cur * sign));
+                    writeWordRegister(id, ADDR_GOAL_CURRENT, static_cast<int16_t>(cur * sign * flip));
                     break;
                 }
                 case ControlType::HOLD: {
