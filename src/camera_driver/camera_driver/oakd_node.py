@@ -164,7 +164,7 @@ def build_pipeline(cfg):
     imu = pipeline.create(dai.node.IMU)
     imu.enableIMUSensor([dai.IMUSensor.ACCELEROMETER_RAW,
                          dai.IMUSensor.GYROSCOPE_RAW,
-                         dai.IMUSensor.ROTATION_VECTOR], 100)
+                         dai.IMUSensor.GAME_ROTATION_VECTOR], 100) # was: ROTATION_VECTOR
     imu.setBatchReportThreshold(1)
     imu.setMaxBatchReports(10)
     queues["imu"] = imu.out.createOutputQueue()
@@ -383,7 +383,7 @@ def pipeline_worker(ros_node):
                             p = imu_packets[-1]
                             a = p.acceleroMeter
                             g = p.gyroscope
-                            rv = p.rotationVector
+                            rv = p.gameRotationVector  # was: p.rotationVector
                             with imu_lock:
                                 imu_data["accel"]["x"] = round(a.x, 3)
                                 imu_data["accel"]["y"] = round(a.y, 3)
