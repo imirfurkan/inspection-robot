@@ -52,7 +52,7 @@ std::map<std::string, DriveModeDef> buildDefaultModes(const MotorLayout& m)
         },
         .reverse_profile = {
             {FL, {ControlType::VELOCITY, 1.0f}},
-            {FR, {ControlType::VELOCITY, 1.0f}},obs
+            {FR, {ControlType::VELOCITY, 1.0f}},
             {RL, {ControlType::VELOCITY, 1.0f}},
             {RR, {ControlType::VELOCITY, 1.0f}},
         }
