@@ -74,6 +74,8 @@ joy_mapper_node:
       - "drive_front_nudge"   # rear hold + front current nudge
       - "drive_front_only"    # rear hold + front velocity
       - "drive_rear_only"     # rear velocity + front hold
+      - "steer_trial_left"    # steering trial left
+      - "steer_trial_right"   # steering trial right
 
     mode_buttons:
       - 7                     # drive_all
@@ -81,3 +83,5 @@ joy_mapper_node:
       - 9                     # drive_front_nudge
       - 10                    # drive_front_only
       - 11                    # drive_rear_only
+      - 4                     # steer_trial_left
+      - 5                     # steer_trial_right
