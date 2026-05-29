@@ -419,6 +419,27 @@ private:
                 else if (id == layout_.front_right) effective_k = ak.fr;
                 else if (id == layout_.rear_left)   effective_k = ak.rl;
                 else if (id == layout_.rear_right)  effective_k = ak.rr;
+
+                // ── Dynamic inner-wheel current mode at steering threshold ──
+                // When steering exceeds threshold, override the inner front wheel
+                // to CURRENT mode (compliant) — mirrors steer_trial_left/right behavior.
+                // Threshold sourced from parameter (default 0.5).
+                const float steer_threshold = 0.2f; // TODO: make this a parameter
+                if (current_steering_position_ < -steer_threshold && id == layout_.front_left) {
+                    // Turning left: FL is inner front
+                    cmd.type = ControlType::CURRENT;
+                    effective_k = ak.fl;
+                } else if (current_steering_position_ > steer_threshold && id == layout_.front_right) {
+                    // Turning right: FR is inner front
+                    cmd.type = ControlType::CURRENT;
+                    effective_k = ak.fr;
+                }
+            }
+
+            // ── Ensure Dynamixel operating mode matches what cmd.type needs ──
+            // This is a no-op if the motor is already in the correct mode.
+            if (is_drive_all) {
+                switchMotorOperatingMode(id, requiredOperatingMode(cmd.type));
             }
 
             switch (cmd.type) {
