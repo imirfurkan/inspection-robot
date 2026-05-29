@@ -9,7 +9,10 @@
  * (linear.x < 0). Each profile maps motor_id → {ControlType, K_gain}.
  *
  * K gain is a multiplier [0.0–1.0] applied to max_velocity or max_current.
- * Use it to give different motors different strengths per mode.
+ *
+ * NOTE: drive_all K gains are NOT set here — the driver node overrides
+ * them at runtime via Ackermann interpolation from /steering_angle.
+ * The 1.0 values below are only the straight-ahead (center) baseline.
  *
  * ControlType options:
  *   VELOCITY — motor in velocity mode, command = K * max_vel * joystick
@@ -32,6 +35,12 @@ std::map<std::string, DriveModeDef> buildDefaultModes(const MotorLayout& m)
 
     // ────────────────────────────────────────────────────────────
     // drive_all — All 4 motors velocity, normal driving
+    // K values here are the straight-ahead baseline (all 1.0).
+    // The driver node interpolates these per-motor based on
+    // /steering_angle for Ackermann differential:
+    //   full left  (servo_min): FL=0.85, FR=1.00, RL=0.79, RR=0.94
+    //   center     (90°):       all 1.0
+    //   full right (servo_max): FL=1.00, FR=0.85, RL=0.94, RR=0.79
     // ────────────────────────────────────────────────────────────
     modes["drive_all"] = {
         .name = "drive_all",
@@ -122,63 +131,6 @@ std::map<std::string, DriveModeDef> buildDefaultModes(const MotorLayout& m)
             {FR, {ControlType::HOLD,     0.0f}},
             {RL, {ControlType::VELOCITY, 1.0f}},
             {RR, {ControlType::VELOCITY, 1.0f}},
-        }
-    };
-
-    // ────────────────────────────────────────────────────────────
-    // drive_pivot_left — Rear-left hold, rear-right velocity, front current
-    //
-    // NOTE: forward/reverse profiles are SYMMETRIC here.
-    // This is your original behavior. When you're ready, tweak the
-    // reverse_profile to do fronts→velocity, rear-left→current, etc.
-    // ────────────────────────────────────────────────────────────
-    modes["drive_pivot_left"] = {
-        .name = "drive_pivot_left",
-        .forward_profile = {
-            {FL, {ControlType::VELOCITY,  0.85f}},
-            {FR, {ControlType::VELOCITY,  1.0f}},
-            {RL, {ControlType::VELOCITY,  0.79f}}, // 0.785
-            {RR, {ControlType::VELOCITY, 0.94f}},
-        },
-        .reverse_profile = {
-            // TODO: customize for reverse driving. Example:
-            //   fronts → VELOCITY with lower K,
-            //   rear-left → CURRENT,
-            //   rear-right → HOLD
-            // For now, mirrors forward.
-            {FL, {ControlType::VELOCITY,  0.85f}},
-            {FR, {ControlType::VELOCITY,  1.0f}},
-            {RL, {ControlType::VELOCITY,  0.79f}},
-            {RR, {ControlType::VELOCITY, 0.94f}},
-        }
-    };
-
-    // ────────────────────────────────────────────────────────────
-    // drive_pivot_right — Rear-right hold, rear-left velocity, front current
-    //
-    // Your example: forward → fronts current, RL vel, RR hold
-    //               reverse → fronts velocity, RL current, RR hold
-    // Uncomment the reverse_profile below when ready to test.
-    // ────────────────────────────────────────────────────────────
-    modes["drive_pivot_right"] = {
-        .name = "drive_pivot_right",
-        .forward_profile = {
-            {FL, {ControlType::VELOCITY,  1.0f}},
-            {FR, {ControlType::VELOCITY,  0.85f}},
-            {RL, {ControlType::VELOCITY, 0.94f}},
-            {RR, {ControlType::VELOCITY,     0.79f}},
-        },
-        .reverse_profile = {
-            // TODO: your described reverse behavior would be:
-            // {FL, {ControlType::VELOCITY, 0.8f}},  // fronts velocity, maybe lower K
-            // {FR, {ControlType::VELOCITY, 0.8f}},
-            // {RL, {ControlType::CURRENT,  1.0f}},  // rear-left current
-            // {RR, {ControlType::HOLD,     0.0f}},  // rear-right still hold
-            // For now, mirrors forward:
-            {FL, {ControlType::VELOCITY,  1.0f}},
-            {FR, {ControlType::VELOCITY,  0.85f}},
-            {RL, {ControlType::VELOCITY, 0.94f}},
-            {RR, {ControlType::VELOCITY,  0.79f}},
         }
     };
 

@@ -74,8 +74,6 @@ joy_mapper_node:
       - "drive_front_nudge"   # rear hold + front current nudge
       - "drive_front_only"    # rear hold + front velocity
       - "drive_rear_only"     # rear velocity + front hold
-      - "drive_pivot_left"    # rear-left hold, rear-right vel, front current
-      - "drive_pivot_right"   # rear-right hold, rear-left vel, front current
 
     mode_buttons:
       - 7                     # drive_all
@@ -83,5 +81,3 @@ joy_mapper_node:
       - 9                     # drive_front_nudge
       - 10                    # drive_front_only
       - 11                    # drive_rear_only
-      - 4                     # drive_pivot_left
-      - 5                     # drive_pivot_right

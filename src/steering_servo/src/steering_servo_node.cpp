@@ -3,7 +3,8 @@
  * ====================
  * Subscribes to /joy (sensor_msgs/Joy) directly
  * Drives a DS3235-180 servo via Raspberry Pi 5 hardware PWM
- *
+ * Publishes /steering_position (std_msgs/Float32) — normalized position: -1.0=full left, 0.0=center, +1.0=full right
+ * 
  * TWO steering modes on separate axes:
  *
  * Axis 2 (twist) — DISCRETE:
@@ -30,6 +31,7 @@
 
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/joy.hpp>
+#include <std_msgs/msg/float32.hpp>
 
 #include <fstream>
 #include <string>
@@ -96,6 +98,10 @@ public:
         if (!initPWM()) {
             RCLCPP_ERROR(this->get_logger(), "PWM init failed — check dtoverlay and permissions");
         }
+
+        // Publisher: normalized steering position for downstream nodes (e.g. Ackermann K interpolation)
+        // -1.0 = full left, 0.0 = center, +1.0 = full right
+        angle_pub_ = this->create_publisher<std_msgs::msg::Float32>("/steering_position", 10);
 
         // Move to center on startup
         if (pwm_initialized_) {
@@ -195,6 +201,26 @@ private:
         int duty_ns = degreesToNs(degrees);
         writeSysfs(pwm_path_ + "duty_cycle", std::to_string(duty_ns));
         current_angle_ = degrees;
+
+        // Publish normalized steering position: -1.0=full left, 0.0=center, +1.0=full right
+        // The servo node owns all geometry — downstream nodes need no servo knowledge.
+        float normalized;
+        if (degrees <= servo_center_) {
+            float range = static_cast<float>(servo_center_ - servo_min_deg_);
+            normalized  = (range > 0.0f)
+                ? 1.0f * (static_cast<float>(servo_center_) - static_cast<float>(degrees)) / range
+                : 0.0f;
+        } else {
+            float range = static_cast<float>(servo_max_deg_ - servo_center_);
+            normalized  = (range > 0.0f)
+                ? -1.0f * (static_cast<float>(degrees) - static_cast<float>(servo_center_)) / range
+                : 0.0f;
+        }
+        normalized = std::clamp(normalized, -1.0f, 1.0f);
+ 
+        auto msg = std_msgs::msg::Float32();
+        msg.data = normalized;
+        angle_pub_->publish(msg);
     }
 
     double applyJoystickDeadzone(double value)
@@ -252,11 +278,9 @@ private:
             now - last_proportional_update_).count();
         if (elapsed < update_interval_ms_) return;
 
-        double stick_val = msg->axes[axis_proportional_];
-
         // Apply joystick deadzone
-        stick_val = applyJoystickDeadzone(stick_val);
-
+        double stick_val = applyJoystickDeadzone(msg->axes[axis_proportional_]);
+        
         // Map stick (-1.0..+1.0) to target angle
         double target_deg;
         if (stick_val >= 0.0) {
@@ -304,6 +328,7 @@ private:
     int update_interval_ms_;
     std::chrono::steady_clock::time_point last_proportional_update_;
 
+    rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr angle_pub_;
     rclcpp::Subscription<sensor_msgs::msg::Joy>::SharedPtr joy_sub_;
 };
 

@@ -11,15 +11,26 @@
  *   Front-Left: ID 10    Front-Right: ID 6
  *   Rear-Left:  ID 1     Rear-Right:  ID 8
  *
- * Subscribes to /cmd_vel (geometry_msgs/Twist)
- * Subscribes to /drive_mode (std_msgs/String)
- * Publishes /motor_status (Float32MultiArray) with telemetry.
+ * Subscribes to /cmd_vel       (geometry_msgs/Twist)
+ * Subscribes to /drive_mode    (std_msgs/String)
+ * Subscribes to /steering_position (std_msgs/Float32) — normalized: -1.0=full left, 0.0=center, +1.0=full right
+ * Publishes  /motor_status      (Float32MultiArray) with telemetry.
+ *
+ * Ackermann K interpolation (drive_all mode only):
+ *   The inner wheels on a turn travel a shorter arc than the outer wheels,
+ *   so their velocity is scaled down proportionally. K values are linearly
+ *   interpolated between center (all 1.0) and the full-lock endpoints:
+ *
+ *   Full left  (position -1.0): FL=0.85, FR=1.00, RL=0.79, RR=0.94
+ *   Center     (position  0.0): FL=1.00, FR=1.00, RL=1.00, RR=1.00
+ *   Full right (position +1.0): FL=1.00, FR=0.85, RL=0.94, RR=0.79
  *
  * e-manual: https://emanual.robotis.com/docs/en/dxl/x/xw540-t140/
  */
 
 #include <rclcpp/rclcpp.hpp>
 #include <geometry_msgs/msg/twist.hpp>
+#include <std_msgs/msg/float32.hpp>
 #include <std_msgs/msg/float32_multi_array.hpp>
 #include <std_msgs/msg/string.hpp>
 #include <vector>
@@ -46,6 +57,26 @@ constexpr uint8_t DXL_MODE_VELOCITY = 1;
 
 constexpr int PROTOCOL_VERSION = 2;
 constexpr float CURRENT_UNIT_MA = 2.69f;
+
+// ── Ackermann K values at full-lock endpoints ────────────────────
+// These describe the velocity ratio of each wheel relative to the
+// fastest (outer) wheel at maximum steering lock.
+//
+// At full LEFT lock:
+//   FL (inner front) = 0.85,  FR (outer front) = 1.00
+//   RL (inner rear)  = 0.79,  RR (outer rear)  = 0.94
+//
+// At full RIGHT lock (mirror of left):
+//   FL (outer front) = 1.00,  FR (inner front) = 0.85
+//   RL (outer rear)  = 0.94,  RR (inner rear)  = 0.79
+struct AckermannKEndpoint {
+    float fl, fr, rl, rr;
+};
+
+static constexpr AckermannKEndpoint K_CENTER    = {1.00f, 1.00f, 1.00f, 1.00f};
+static constexpr AckermannKEndpoint K_FULL_LEFT = {0.85f, 1.00f, 0.79f, 0.94f};
+static constexpr AckermannKEndpoint K_FULL_RIGHT= {1.00f, 0.85f, 0.94f, 0.79f};
+
 
 class DynamixelDriverNode : public rclcpp::Node
 {
@@ -82,8 +113,8 @@ public:
         layout_.rear_left   = static_cast<uint8_t>(this->get_parameter("rear_left_id").as_int());
         layout_.rear_right  = static_cast<uint8_t>(this->get_parameter("rear_right_id").as_int());
 
-        max_velocity_     = this->get_parameter("max_velocity").as_int();
-        max_current_ma_   = this->get_parameter("max_current_ma").as_double();
+        max_velocity_      = this->get_parameter("max_velocity").as_int();
+        max_current_ma_    = this->get_parameter("max_current_ma").as_double();
         max_current_units_ = static_cast<int16_t>(max_current_ma_ / CURRENT_UNIT_MA);
         double loop_rate   = this->get_parameter("loop_rate").as_double();
         std::string default_mode = this->get_parameter("default_mode").as_string();
@@ -93,9 +124,7 @@ public:
 
         // Log available modes
         std::string mode_list;
-        for (const auto& [name, _] : mode_table_) {
-            mode_list += name + " ";
-        }
+        for (const auto& [name, _] : mode_table_) mode_list += name + " ";
         RCLCPP_INFO(this->get_logger(), "Available modes: [%s]", mode_list.c_str());
 
         // ── Initialize Dynamixel SDK ──
@@ -118,15 +147,12 @@ public:
         // Set initial mode
         if (mode_table_.count(default_mode)) {
             active_mode_ = &mode_table_[default_mode];
-            // Track current operating mode per motor (all start as velocity after initMotors)
-            for (uint8_t id : active_ids_) {
-                current_op_mode_[id] = DXL_MODE_VELOCITY;
-            }
-            // Apply any operating mode changes needed by the default mode
+            for (uint8_t id : active_ids_) current_op_mode_[id] = DXL_MODE_VELOCITY;
             applyOperatingModeChanges(mode_table_[default_mode], true);
             RCLCPP_INFO(this->get_logger(), "Starting in mode: %s", default_mode.c_str());
         } else {
-            RCLCPP_ERROR(this->get_logger(), "Default mode '%s' not found in mode table!", default_mode.c_str());
+            RCLCPP_ERROR(this->get_logger(),
+                "Default mode '%s' not found in mode table!", default_mode.c_str());
             return;
         }
 
@@ -139,6 +165,11 @@ public:
             "/drive_mode", 10,
             std::bind(&DynamixelDriverNode::modeCallback, this, std::placeholders::_1));
 
+        // Steering position — normalized [-1,1], used for Ackermann K interpolation in drive_all
+        steering_sub_ = this->create_subscription<std_msgs::msg::Float32>(
+            "/steering_position", 10,
+            std::bind(&DynamixelDriverNode::steeringCallback, this, std::placeholders::_1));
+
         status_pub_ = this->create_publisher<std_msgs::msg::Float32MultiArray>(
             "/motor_status", 10);
 
@@ -149,6 +180,8 @@ public:
         RCLCPP_INFO(this->get_logger(),
             "Dynamixel driver ready. Max velocity: %d units, Max current: %.0f mA (%d units)",
             max_velocity_, max_current_ma_, max_current_units_);
+        RCLCPP_INFO(this->get_logger(),
+            "Ackermann interpolation active for drive_all — subscribed to /steering_position");
     }
 
     ~DynamixelDriverNode()
@@ -158,13 +191,41 @@ public:
             writeWordRegister(id, ADDR_GOAL_CURRENT, 0);
             writeByteRegister(id, ADDR_TORQUE_ENABLE, 0);
         }
-        if (port_handler_) {
-            port_handler_->closePort();
-        }
+        if (port_handler_) port_handler_->closePort();
         RCLCPP_INFO(this->get_logger(), "Motors stopped, port closed.");
     }
 
 private:
+    // ── Ackermann K interpolation ─────────────────────────────────
+    // pos: -1.0 = full left, 0.0 = center, +1.0 = full right
+    // t = abs(pos), linearly interpolated from center (t=0) to endpoint (t=1).
+    struct PerMotorK {
+        float fl, fr, rl, rr;
+    };
+
+    PerMotorK computeAckermannK(float pos) const
+    {
+        pos = std::clamp(pos, -1.0f, 1.0f);
+        float t = std::abs(pos);
+        PerMotorK k;
+
+        if (pos <= 0.0f) {
+            // Turning left
+            k.fl = K_CENTER.fl + t * (K_FULL_LEFT.fl - K_CENTER.fl);
+            k.fr = K_CENTER.fr + t * (K_FULL_LEFT.fr - K_CENTER.fr);
+            k.rl = K_CENTER.rl + t * (K_FULL_LEFT.rl - K_CENTER.rl);
+            k.rr = K_CENTER.rr + t * (K_FULL_LEFT.rr - K_CENTER.rr);
+        } else {
+            // Turning right
+            k.fl = K_CENTER.fl + t * (K_FULL_RIGHT.fl - K_CENTER.fl);
+            k.fr = K_CENTER.fr + t * (K_FULL_RIGHT.fr - K_CENTER.fr);
+            k.rl = K_CENTER.rl + t * (K_FULL_RIGHT.rl - K_CENTER.rl);
+            k.rr = K_CENTER.rr + t * (K_FULL_RIGHT.rr - K_CENTER.rr);
+        }
+
+        return k;
+    }
+
     // ── Motor initialization ──────────────────────────────────────
     bool initMotors()
     {
@@ -209,14 +270,10 @@ private:
         return motors_initialized_;
     }
 
-    // ── Generic operating mode switch for any motor ───────────────
-    // Only does the torque-off/switch/torque-on dance if the motor's
-    // current operating mode differs from what's requested.
+    // ── Generic operating mode switch ────────────────────────────
     void switchMotorOperatingMode(uint8_t id, uint8_t target_mode)
     {
-        if (current_op_mode_.count(id) && current_op_mode_[id] == target_mode) {
-            return;  // already in the right mode, skip
-        }
+        if (current_op_mode_.count(id) && current_op_mode_[id] == target_mode) return;
 
         // Zero commands before switching
         writeWordRegister(id, ADDR_GOAL_CURRENT, 0);
@@ -244,8 +301,6 @@ private:
     // and on zero-crossing (when direction flips to the other profile).
     void applyProfileOperatingModes(const std::map<uint8_t, MotorCommand>& profile)
     {
-        RCLCPP_INFO(this->get_logger(), "Applying profile, going_forward_=%d", going_forward_);
-
         for (uint8_t id : active_ids_) {
             MotorCommand cmd = getCommand(profile, id);
             uint8_t target = requiredOperatingMode(cmd.type);
@@ -269,6 +324,12 @@ private:
         applyProfileOperatingModes(profile);
     }
 
+    // ── Steering position callback ────────────────────────────────
+    void steeringCallback(const std_msgs::msg::Float32::SharedPtr msg)
+    {
+        current_steering_position_ = msg->data;
+    }
+
     // ── Mode switch callback ──────────────────────────────────────
     void modeCallback(const std_msgs::msg::String::SharedPtr msg)
     {
@@ -290,7 +351,6 @@ private:
         }
 
         const DriveModeDef& new_mode = it->second;
-
         RCLCPP_INFO(this->get_logger(), "Drive mode: %s → %s",
             active_mode_ ? active_mode_->name.c_str() : "NONE",
             new_mode.name.c_str());
@@ -309,7 +369,7 @@ private:
     {
         if (!motors_initialized_ || !active_mode_) return;
 
-        double speed = msg->linear.x;
+        double speed   = msg->linear.x;
         double clamped = std::clamp(speed, -1.0, 1.0);
         bool now_forward = (clamped <= 0.0); // TODO important
         // RCLCPP_INFO(this->get_logger(), "clamped=%.3f, now_forward=%d, going_forward_=%d", clamped, now_forward, going_forward_);
@@ -333,19 +393,42 @@ private:
             ? active_mode_->forward_profile
             : active_mode_->reverse_profile;
 
+        // Compute per-motor K for drive_all (Ackermann interpolation).
+        // For all other modes K comes directly from the profile struct.
+        const bool is_drive_all = (active_mode_->name == "drive_all");
+        PerMotorK ak{};
+        if (is_drive_all) {
+            ak = computeAckermannK(current_steering_position_);
+
+            // Print current K proportions when actively steering (position non-zero)
+            if (std::abs(current_steering_position_) > 0.01f) {
+                RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 200,
+                    "[drive_all] steering=%.2f  FL=%.3f  FR=%.3f  RL=%.3f  RR=%.3f",
+                    current_steering_position_, ak.fl, ak.fr, ak.rl, ak.rr);
+            }
+        }
+
         for (uint8_t id : active_ids_) {
             MotorCommand cmd = getCommand(profile, id);
             int sign = reverse_ids_.count(id) ? -1 : 1;
-            
-        
+
+            // Override K with Ackermann value for drive_all VELOCITY motors
+            float effective_k = cmd.k;
+            if (is_drive_all && cmd.type == ControlType::VELOCITY) {
+                if      (id == layout_.front_left)  effective_k = ak.fl;
+                else if (id == layout_.front_right) effective_k = ak.fr;
+                else if (id == layout_.rear_left)   effective_k = ak.rl;
+                else if (id == layout_.rear_right)  effective_k = ak.rr;
+            }
+
             switch (cmd.type) {
                 case ControlType::VELOCITY: {
-                    int32_t vel = static_cast<int32_t>(clamped * cmd.k * max_velocity_);
+                    int32_t vel = static_cast<int32_t>(clamped * effective_k * max_velocity_);
                     writeDwordRegister(id, ADDR_GOAL_VELOCITY, vel * sign);
                     break;
                 }
                 case ControlType::CURRENT: {
-                    int16_t cur = static_cast<int16_t>(clamped * cmd.k * max_current_units_);
+                    int16_t cur = static_cast<int16_t>(clamped * effective_k * max_current_units_);
                     writeWordRegister(id, ADDR_GOAL_CURRENT, static_cast<int16_t>(cur * sign));
                     break;
                 }
@@ -414,11 +497,14 @@ private:
     double      max_current_ma_;
     int16_t     max_current_units_;
 
+    // Normalized steering position in [-1, 1] — updated by /steering_position subscription
+    float current_steering_position_ = 0.0f;
+
     // Mode system
     std::map<std::string, DriveModeDef> mode_table_;
     const DriveModeDef* active_mode_ = nullptr;
-    std::map<uint8_t, uint8_t> current_op_mode_;  // tracks each motor's current Dynamixel operating mode
-    bool going_forward_ = true;  // tracks direction for zero-crossing detection
+    std::map<uint8_t, uint8_t> current_op_mode_;
+    bool going_forward_ = true;
 
     bool motors_initialized_ = false;
 
@@ -427,6 +513,7 @@ private:
 
     rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr cmd_sub_;
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr mode_sub_;
+    rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr steering_sub_;
     rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr status_pub_;
     rclcpp::TimerBase::SharedPtr status_timer_;
 };
