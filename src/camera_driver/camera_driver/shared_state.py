@@ -52,6 +52,8 @@ imu_data = {
 imu_ref_quat = {"i": 0.0, "j": 0.0, "k": 0.0, "real": 1.0}
 imu_ref_set = False
 
+# Per-axis Euler offsets (set by Zero IMU)
+imu_euler_offsets = {"pitch": 0.0, "roll": 0.0, "yaw": 0.0}
 
 # ═══════════════════════════════════════════════════════
 # Robot position state (pitch-based classification)

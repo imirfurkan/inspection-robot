@@ -222,21 +222,21 @@ def api_imu():
 
 @flask_app.route("/api/imu/zero", methods=["POST"])
 def api_imu_zero():
-    """Set current orientation as the zero reference."""
+    """Set current orientation as the zero reference (per-axis Euler offsets)."""
     with imu_lock:
-        state.imu_ref_quat["i"] = imu_data["rotation"]["i"]
-        state.imu_ref_quat["j"] = imu_data["rotation"]["j"]
-        state.imu_ref_quat["k"] = imu_data["rotation"]["k"]
-        state.imu_ref_quat["real"] = imu_data["rotation"]["real"]
-        state.imu_ref_set = True
+        state.imu_euler_offsets["pitch"] = imu_data["orientation"]["pitch"]
+        state.imu_euler_offsets["roll"]  = imu_data["orientation"]["roll"]
+        state.imu_euler_offsets["yaw"]   = imu_data["orientation"]["yaw"]
     return jsonify({"ok": True, "msg": "IMU zeroed."})
-
 
 @flask_app.route("/api/imu/reset", methods=["POST"])
 def api_imu_reset():
-    """Clear the zero reference (show absolute orientation)."""
+    """Clear the zero reference."""
     with imu_lock:
-        state.imu_ref_set = False
+        # Correct — mutates in place
+        state.imu_euler_offsets["pitch"] = 0.0
+        state.imu_euler_offsets["roll"]  = 0.0
+        state.imu_euler_offsets["yaw"]   = 0.0
     return jsonify({"ok": True, "msg": "IMU reference cleared."})
 
 

@@ -41,7 +41,7 @@ from std_msgs.msg import String
 from camera_driver.shared_state import (
     frame_lock, current_frames,
     config_lock, current_config,
-    imu_lock, imu_data,
+    imu_lock, imu_data, imu_euler_offsets,
     recording_lock,
     pipeline_stop, pipeline_restart, controls_dirty,
     position_lock, position_state, position_ranges,
@@ -164,7 +164,7 @@ def build_pipeline(cfg):
     imu = pipeline.create(dai.node.IMU)
     imu.enableIMUSensor([dai.IMUSensor.ACCELEROMETER_RAW,
                          dai.IMUSensor.GYROSCOPE_RAW,
-                         dai.IMUSensor.GAME_ROTATION_VECTOR], 100) # was: ROTATION_VECTOR
+                         dai.IMUSensor.ROTATION_VECTOR], 100) # was: ROTATION_VECTOR
     imu.setBatchReportThreshold(1)
     imu.setMaxBatchReports(10)
     queues["imu"] = imu.out.createOutputQueue()
@@ -381,9 +381,12 @@ def pipeline_worker(ros_node):
                         imu_packets = imu_pkt.packets
                         if imu_packets:
                             p = imu_packets[-1]
+                            # print([a for a in dir(p) if 'ot' in a.lower() or 'vec' in a.lower()])
+
                             a = p.acceleroMeter
                             g = p.gyroscope
-                            rv = p.gameRotationVector  # was: p.rotationVector
+                            rv = p.rotationVector
+
                             with imu_lock:
                                 imu_data["accel"]["x"] = round(a.x, 3)
                                 imu_data["accel"]["y"] = round(a.y, 3)
@@ -399,16 +402,16 @@ def pipeline_worker(ros_node):
                                 # Compute orientation relative to reference
                                 qi, qj, qk, qr = rv.i, rv.j, rv.k, rv.real
 
-                                if state.imu_ref_set:
-                                    ri = -state.imu_ref_quat["i"]
-                                    rj = -state.imu_ref_quat["j"]
-                                    rk = -state.imu_ref_quat["k"]
-                                    rr = state.imu_ref_quat["real"]
-                                    qi2 = rr*qi + ri*qr + rj*qk - rk*qj
-                                    qj2 = rr*qj - ri*qk + rj*qr + rk*qi
-                                    qk2 = rr*qk + ri*qj - rj*qi + rk*qr
-                                    qr2 = rr*qr - ri*qi - rj*qj - rk*qk
-                                    qi, qj, qk, qr = qi2, qj2, qk2, qr2
+                                # if state.imu_ref_set:
+                                #     ri = -state.imu_ref_quat["i"]
+                                #     rj = -state.imu_ref_quat["j"]
+                                #     rk = -state.imu_ref_quat["k"]
+                                #     rr = state.imu_ref_quat["real"]
+                                #     qi2 = rr*qi + ri*qr + rj*qk - rk*qj
+                                #     qj2 = rr*qj - ri*qk + rj*qr + rk*qi
+                                #     qk2 = rr*qk + ri*qj - rj*qi + rk*qr
+                                #     qr2 = rr*qr - ri*qi - rj*qj - rk*qk
+                                #     qi, qj, qk, qr = qi2, qj2, qk2, qr2
 
                                 # Euler from quaternion (ZYX)
                                 import math
@@ -424,10 +427,11 @@ def pipeline_worker(ros_node):
                                 cosy = 1 - 2 * (qj * qj + qk * qk)
                                 sensor_yaw = math.atan2(siny, cosy) * 57.2958
 
+                                off = state.imu_euler_offsets
                                 # Swap pitch/roll (sensor axes don't match robot axes)
                                 imu_data["orientation"]["pitch"] = round(sensor_roll, 1)
-                                imu_data["orientation"]["roll"] = round(sensor_yaw, 1)
-                                imu_data["orientation"]["yaw"] = round(sensor_pitch, 1)
+                                imu_data["orientation"]["roll"] = round(sensor_pitch, 1)
+                                imu_data["orientation"]["yaw"] = round(sensor_yaw, 1)
 
                                 imu_data["timestamp"] = time.time()
 
