@@ -429,9 +429,9 @@ def pipeline_worker(ros_node):
 
                                 off = state.imu_euler_offsets
                                 # Swap pitch/roll (sensor axes don't match robot axes)
-                                imu_data["orientation"]["pitch"] = round(sensor_roll, 1)
-                                imu_data["orientation"]["roll"] = round(sensor_pitch, 1)
-                                imu_data["orientation"]["yaw"] = round(sensor_yaw, 1)
+                                imu_data["orientation"]["pitch"] = round(sensor_roll  - off["pitch"], 1)
+                                imu_data["orientation"]["roll"]  = round(sensor_pitch - off["roll"],  1)
+                                imu_data["orientation"]["yaw"]   = round(sensor_yaw   - off["yaw"],   1)
 
                                 imu_data["timestamp"] = time.time()
 
