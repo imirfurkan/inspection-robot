@@ -25,7 +25,7 @@ steering_servo_node:
     proportional_deadzone: 0.2    # joystick deadzone (0.0–1.0) TODO tune
     angle_deadband: 2.0           # ignore angle changes smaller than this (degrees)
                                   #  increase if servo still jitters, decrease if it feels sluggish
-    slew_rate_deg: 5.0            # max degrees per update step
+    slew_rate_deg: 180.0            # max degrees per update step
                                   # increase for faster response, decrease for smoother movement
-    update_interval_ms: 50        # min milliseconds between servo commands
-                                  # decrease for more responsive (20ms = very responsive), increase for more relaxed
+    update_interval_ms: 0        # min milliseconds between servo commands
+                                 # decrease for more responsive (20ms = very responsive), increase for more relaxed
