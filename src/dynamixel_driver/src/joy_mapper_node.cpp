@@ -56,7 +56,6 @@ public:
         this->declare_parameter("tank_turn_threshold", 0.5);
         this->declare_parameter("tank_turn_restore_mode", std::string("drive_all"));
         this->declare_parameter("tank_turn_button", 1);         // button that must be held
-        this->declare_parameter("tank_xy_deadzone", 0.4);       // X/Y must be within this to allow tank
 
         // ── Mode mapping from YAML ──
         // Two parallel arrays: mode_names[i] is triggered by mode_buttons[i].
@@ -72,8 +71,7 @@ public:
         tank_threshold_    = this->get_parameter("tank_turn_threshold").as_double();
         tank_restore_mode_ = this->get_parameter("tank_turn_restore_mode").as_string();
         tank_button_       = this->get_parameter("tank_turn_button").as_int();
-        tank_xy_deadzone_  = this->get_parameter("tank_xy_deadzone").as_double();
-        axis0_deadzone_ = this->get_parameter("axis0_deadzone").as_double();
+        axis0_deadzone_    = this->get_parameter("axis0_deadzone").as_double();
 
 
         // Build mode button table from the parallel arrays
@@ -112,10 +110,7 @@ public:
             RCLCPP_WARN(this->get_logger(),
                 "No mode buttons configured. Set mode_names and mode_buttons in YAML.");
         }
-        RCLCPP_INFO(this->get_logger(),
-            "Tank turn: button %d + axis 2, threshold=%.2f, xy_deadzone=%.2f, restores to '%s'",
-            tank_button_, tank_threshold_, tank_xy_deadzone_, tank_restore_mode_.c_str());
-    }
+        }
 
 private:
     double applyDeadzone(double val) const
@@ -228,7 +223,7 @@ private:
     double tank_threshold_;
     std::string tank_restore_mode_;
     int tank_button_;
-    double tank_xy_deadzone_;
+    double axis0_deadzone_;
     bool imu_zero_prev_  = false;
     bool imu_reset_prev_ = false;
 
