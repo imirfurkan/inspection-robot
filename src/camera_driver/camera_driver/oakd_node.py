@@ -608,22 +608,16 @@ class OakDNode(RosNode):
     def _print_endpoints(self, port):
         ip_hints = []
         try:
-            result = subprocess.run(
-                ["ip", "-4", "-o", "addr", "show"],
-                capture_output=True, text=True, timeout=5)
-            for line in result.stdout.strip().split("\n"):
-                parts = line.split()
-                if len(parts) >= 4:
-                    iface = parts[1]
-                    ip_addr = parts[3].split("/")[0]
-                    if (ip_addr != "127.0.0.1"
-                            and not iface.startswith("docker")):
-                        ip_hints.append((iface, ip_addr))
+            import socket
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            ip_hints.append(("eth0", s.getsockname()[0]))
+            s.close()
         except Exception:
-            pass
-
-        if not ip_hints:
             ip_hints = [("unknown", "<rpi-ip>")]
+
+            if not ip_hints:
+                ip_hints = [("unknown", "<rpi-ip>")]
 
         self.get_logger().info("=" * 50)
         self.get_logger().info("  OAK-D Pro Camera Node")

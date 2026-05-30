@@ -170,6 +170,10 @@ public:
             "/steering_position", 10,
             std::bind(&DynamixelDriverNode::steeringCallback, this, std::placeholders::_1));
 
+        position_sub_ = this->create_subscription<std_msgs::msg::String>(
+            "/robot_position", 10,
+            std::bind(&DynamixelDriverNode::positionCallback, this, std::placeholders::_1));
+
         status_pub_ = this->create_publisher<std_msgs::msg::Float32MultiArray>(
             "/motor_status", 10);
 
@@ -361,6 +365,10 @@ private:
         active_mode_ = &new_mode;
     }
 
+    void positionCallback(const std_msgs::msg::String::SharedPtr msg)
+    {
+        current_robot_position_ = msg->data;
+    }
     // ── Command callback ──────────────────────────────────────────
     // Generic — no mode-specific logic. Handles direction changes by
     // switching motor operating modes at the zero crossing so HOLD
@@ -396,6 +404,13 @@ private:
         // Compute per-motor K for drive_all (Ackermann interpolation).
         // For all other modes K comes directly from the profile struct.
         const bool is_drive_all = (active_mode_->name == "drive_all");
+        // ── Buckling compensation (horizontal_buckling state only) ──
+        // Reduces drive wheel speeds to prevent over-compression during buckling.
+        // Forward: rear wheels at 0.7x  |  Reverse: front wheels at 0.7x
+        const bool apply_buckling_comp = (is_drive_all
+            && current_robot_position_ == "horizontal_buckling"
+            && std::abs(clamped) > 0.0
+            && std::abs(current_steering_position_) < 0.05f);  // only when going straight
         PerMotorK ak{};
         if (is_drive_all) {
             ak = computeAckermannK(current_steering_position_);
@@ -440,6 +455,14 @@ private:
             // This is a no-op if the motor is already in the correct mode.
             if (is_drive_all) {
                 switchMotorOperatingMode(id, requiredOperatingMode(cmd.type));
+            }
+
+            // Apply buckling compensation multiplier if active
+            if (apply_buckling_comp) {
+                bool is_rear  = (id == layout_.rear_left  || id == layout_.rear_right);
+                bool is_front = (id == layout_.front_left || id == layout_.front_right);
+                if (now_forward && is_rear)   effective_k *= 1.0f;
+                if (!now_forward && is_front) effective_k *= 1.0f;
             }
 
             switch (cmd.type) {
@@ -519,6 +542,8 @@ private:
     int         max_velocity_;
     double      max_current_ma_;
     int16_t     max_current_units_;
+    // Robot position state — updated by /robot_position subscription
+    std::string current_robot_position_ = "unknown";
 
     // Normalized steering position in [-1, 1] — updated by /steering_position subscription
     float current_steering_position_ = 0.0f;
@@ -539,6 +564,7 @@ private:
     rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr steering_sub_;
     rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr status_pub_;
     rclcpp::TimerBase::SharedPtr status_timer_;
+    rclcpp::Subscription<std_msgs::msg::String>::SharedPtr position_sub_;
 };
 
 int main(int argc, char** argv)
