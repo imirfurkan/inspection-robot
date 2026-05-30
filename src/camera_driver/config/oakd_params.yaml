@@ -46,7 +46,7 @@ oakd_node:
     ir_flood_brightness: 0.0    # Flood LED intensity 0.0 - 1.0
 
     # ── Stereo depth ──
-    enable_depth: true
+    enable_depth: false
     depth_preset: "HIGH_DENSITY"  # HIGH_DENSITY, HIGH_ACCURACY
     lr_check: true
     extended_disparity: false

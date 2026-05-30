@@ -43,7 +43,7 @@ dynamixel_driver_node:
     default_mode: "drive_all"
 
     # rate limiting velocity
-    max_accel_per_tick: 2    # max velocity change per control loop tick
+    # max_accel_per_tick: 2    # max velocity change per control loop tick
     # So max_accel_per_tick: 10 means each tick (20ms at 50Hz) the motor speed can change by at most 10 × 0.229 = 2.29 RPM per tick.
     # Per second that's 2.29 × 50 = 114.5 RPM/sec acceleration rate.
     # Your max_velocity is 218 units = ~50 RPM. So 0 to full speed takes 50 / 114.5 = ~0.44 seconds.
@@ -53,14 +53,14 @@ dynamixel_driver_node:
 # ── Joy Mapper Node ───────────────────────────────────────────
 joy_mapper_node:
   ros__parameters:
-    deadzone: 0.20
+    deadzone: 0.15
+    axis0_deadzone: 0.2  # match proportional_deadzone in servo_params.yaml
     max_linear_speed: 1.0
     max_angular_speed: 1.0
     axis_linear: 1          # stick Y (inverted in code)
     axis_angular: 2         # stick twist Z
     enable_button: -1       # -1 = no deadman switch
-    tank_turn_threshold: 0.5
-    tank_turn_restore_mode: "drive_all"
+
     # ── Mode-to-button mapping ──
     # Parallel arrays: mode_names[i] fires on mode_buttons[i].
     # Logitech Extreme 3D Pro has buttons 0-11.
@@ -75,6 +75,9 @@ joy_mapper_node:
       - "drive_front_nudge"   # rear hold + front current nudge
       - "drive_front_only"    # rear hold + front velocity
       - "drive_rear_only"     # rear velocity + front hold
+      # - "steer_trial_left"     # steer trial: left wheel current assist
+      # - "steer_trial_right"    # steer trial: right wheel current assist
+
 
     mode_buttons:
       - 7                     # drive_all
@@ -82,3 +85,6 @@ joy_mapper_node:
       - 9                     # drive_front_nudge
       - 10                    # drive_front_only
       - 11                    # drive_rear_only
+      # - 4                     # steer_trial_left
+      # - 5                     # steer_trial_right
+      - 1                    # tank turn activation

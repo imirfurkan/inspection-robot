@@ -6,7 +6,7 @@ steering_servo_node:
     pwm_channel: 0          # PWM0 = GPIO 12
 
     # DS3235-180 servo range
-    servo_min_deg: 20.0      # physical hard-stop left
+    servo_min_deg: 15.0      # physical hard-stop left
     servo_max_deg: 162.0     # physical hard-stop right
     servo_center_deg: 90.0   # straight ahead
 
@@ -20,7 +20,7 @@ steering_servo_node:
 
     # Proportional steering (axis 0 stick X) — experimental
     axis_proportional: 0
-    proportional_deadzone: 0.2    # joystick deadzone (0.0–1.0) TODO tune
+    proportional_deadzone: 0.2    # joystick deadzone (0.0–1.0) TODO tune TODO sync with joy_mapper_node axis0_deadzone
     angle_deadband: 2.0           # ignore angle changes smaller than this (degrees)
                                   #  increase if servo still jitters, decrease if it feels sluggish
     slew_rate_deg: 180.0            # max degrees per update step

@@ -410,7 +410,8 @@ private:
         const bool apply_buckling_comp = (is_drive_all
             && current_robot_position_ == "horizontal_buckling"
             && std::abs(clamped) > 0.0
-            && std::abs(current_steering_position_) < 0.05f);  // only when going straight
+            && !(std::abs(current_steering_position_) > 0.1f && now_forward)); // && (std::abs(current_steering_position_) < 0.05f
+
         PerMotorK ak{};
         if (is_drive_all) {
             ak = computeAckermannK(current_steering_position_);
@@ -440,11 +441,13 @@ private:
                 // to CURRENT mode (compliant) — mirrors steer_trial_left/right behavior.
                 // Threshold sourced from parameter (default 0.5).
                 const float steer_threshold = 0.2f; // TODO: make this a parameter
-                if (current_steering_position_ < -steer_threshold && id == layout_.front_left) {
+                if (current_steering_position_ < -steer_threshold && now_forward && id == layout_.front_left)
+                {
                     // Turning left: FL is inner front
                     cmd.type = ControlType::CURRENT;
                     effective_k = ak.fl;
-                } else if (current_steering_position_ > steer_threshold && id == layout_.front_right) {
+                } else if (current_steering_position_ > steer_threshold && now_forward && id == layout_.front_right)
+                {
                     // Turning right: FR is inner front
                     cmd.type = ControlType::CURRENT;
                     effective_k = ak.fr;
@@ -461,8 +464,8 @@ private:
             if (apply_buckling_comp) {
                 bool is_rear  = (id == layout_.rear_left  || id == layout_.rear_right);
                 bool is_front = (id == layout_.front_left || id == layout_.front_right);
-                if (now_forward && is_rear)   effective_k *= 1.0f;
-                if (!now_forward && is_front) effective_k *= 1.0f;
+                if (now_forward && is_rear)   effective_k *= 0.8f;
+                if (!now_forward && is_front) effective_k *= 0.8f;
             }
 
             switch (cmd.type) {

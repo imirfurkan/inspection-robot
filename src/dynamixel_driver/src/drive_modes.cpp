@@ -135,55 +135,55 @@ std::map<std::string, DriveModeDef> buildDefaultModes(const MotorLayout& m)
     };
 
     // ── tank_turn_right — left side forward, right side backward ──
-    modes["tank_turn_right"] = {
-        .name = "tank_turn_right",
-        .forward_profile = {
-            {FL, {ControlType::VELOCITY, 1.0f, false}},
-            {RL, {ControlType::VELOCITY, 1.0f, false}},
-            {FR, {ControlType::VELOCITY, 1.0f, true}},   // reversed
-            {RR, {ControlType::VELOCITY, 1.0f, true}},   // reversed
-        },
-        .reverse_profile = {
-            {FL, {ControlType::VELOCITY, 1.0f, false}},
-            {RL, {ControlType::VELOCITY, 1.0f, false}},
-            {FR, {ControlType::VELOCITY, 1.0f, true}},
-            {RR, {ControlType::VELOCITY, 1.0f, true}},
-        }
-    };
-
     modes["tank_turn_left"] = {
         .name = "tank_turn_left",
         .forward_profile = {
-            {FL, {ControlType::VELOCITY, 1.0f, true}},   // reversed
-            {RL, {ControlType::VELOCITY, 1.0f, true}},   // reversed
-            {FR, {ControlType::VELOCITY, 1.0f, false}},
-            {RR, {ControlType::VELOCITY, 1.0f, false}},
+            {FL, {ControlType::VELOCITY, 1.0f, false}},
+            {RL, {ControlType::VELOCITY, 1.0f, true}},
+            {FR, {ControlType::VELOCITY, 1.0f, true}},   // reversed
+            {RR, {ControlType::VELOCITY, 1.0f, false}},   // reversed
         },
         .reverse_profile = {
-            {FL, {ControlType::VELOCITY, 1.0f, true}},
+            {FL, {ControlType::VELOCITY, 1.0f, false}},
             {RL, {ControlType::VELOCITY, 1.0f, true}},
-            {FR, {ControlType::VELOCITY, 1.0f, false}},
+            {FR, {ControlType::VELOCITY, 1.0f, true}},
             {RR, {ControlType::VELOCITY, 1.0f, false}},
         }
     };
+
+    modes["tank_turn_right"] = {
+        .name = "tank_turn_right",
+        .forward_profile = {
+            {FL, {ControlType::VELOCITY, 1.0f, true}},   // reversed
+            {RL, {ControlType::VELOCITY, 1.0f, false}},   // reversed
+            {FR, {ControlType::VELOCITY, 1.0f, false}},
+            {RR, {ControlType::VELOCITY, 1.0f, true}},
+        },
+        .reverse_profile = {
+            {FL, {ControlType::VELOCITY, 1.0f, true}},
+            {RL, {ControlType::VELOCITY, 1.0f, false}},
+            {FR, {ControlType::VELOCITY, 1.0f, false}},
+            {RR, {ControlType::VELOCITY, 1.0f, true}},
+        }
+    };
     
-    // integeated into drive_all with Ackermann interpolation, so these "steer_trial" modes are not needed anymore.
+    // // integeated into drive_all with Ackermann interpolation, so these "steer_trial" modes are not needed anymore.
     // // ────────────────────────────────────────────────────────────
     // // steer_trial —
     // // (This mode is not intended for regular use and may be removed later.)
     // modes["steer_trial_left"] = {
     //     .name = "steer_trial_left",
     //     .forward_profile = {
-    //         {FL, {ControlType::CURRENT, 0.85f}},
-    //         {FR, {ControlType::VELOCITY, 1.0f}},
-    //         {RL, {ControlType::VELOCITY, 0.79f}},
-    //         {RR, {ControlType::VELOCITY, 0.94f}},
+    //         {FL, {ControlType::CURRENT, 0.85f, false}},
+    //         {FR, {ControlType::VELOCITY, 1.0f, false}},
+    //         {RL, {ControlType::VELOCITY, 0.79f, false}},
+    //         {RR, {ControlType::VELOCITY, 0.94f, false}},
     //     },
     //     .reverse_profile = {
-    //         {FL, {ControlType::VELOCITY, 0.85f}},
-    //         {FR, {ControlType::VELOCITY, 1.0f}},
-    //         {RL, {ControlType::CURRENT, 0.79f}},
-    //         {RR, {ControlType::VELOCITY, 0.94f}},
+    //         {FL, {ControlType::VELOCITY, 0.85f, false}},
+    //         {FR, {ControlType::VELOCITY, 1.0f, false}},
+    //         {RL, {ControlType::CURRENT, 0.79f, false}},
+    //         {RR, {ControlType::VELOCITY, 0.94f, false}},
     //     }
     // };
 
@@ -191,16 +191,16 @@ std::map<std::string, DriveModeDef> buildDefaultModes(const MotorLayout& m)
     // modes["steer_trial_right"] = {
     //     .name = "steer_trial_right",
     //     .forward_profile = {
-    //         {FL, {ControlType::VELOCITY, 1.0f}},
-    //         {FR, {ControlType::CURRENT, 0.85f}},
-    //         {RL, {ControlType::VELOCITY, 0.94f}},
-    //         {RR, {ControlType::VELOCITY, 0.79f}},
+    //         {FL, {ControlType::VELOCITY, 1.0f, false}},
+    //         {FR, {ControlType::CURRENT, 0.85f, false}},
+    //         {RL, {ControlType::VELOCITY, 0.94f, false}},
+    //         {RR, {ControlType::VELOCITY, 0.79f, false}},
     //     },
     //     .reverse_profile = {
-    //         {FL, {ControlType::VELOCITY, 1.0f}},
-    //         {FR, {ControlType::VELOCITY, 0.85f}},
-    //         {RL, {ControlType::VELOCITY, 0.94f}},
-    //         {RR, {ControlType::CURRENT, 0.79f}},
+    //         {FL, {ControlType::VELOCITY, 1.0f, false}},
+    //         {FR, {ControlType::VELOCITY, 0.85f, false}},
+    //         {RL, {ControlType::VELOCITY, 0.94f, false}},
+    //         {RR, {ControlType::CURRENT, 0.79f, false}},
     //     }
     // };
 
