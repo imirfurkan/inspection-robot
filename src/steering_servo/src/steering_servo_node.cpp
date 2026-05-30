@@ -45,7 +45,7 @@ class SteeringServoNode : public rclcpp::Node
 public:
     SteeringServoNode()
     : Node("steering_servo_node"),
-      pwm_initialized_(false),
+      pwm_initialized_(false)
     {
         // Declare parameters
         this->declare_parameter("pwm_chip", 0);
