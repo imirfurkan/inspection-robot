@@ -24,6 +24,7 @@ import time
 import subprocess
 import sys
 
+
 import cv2
 import numpy as np
 
@@ -36,7 +37,7 @@ except ImportError:
 
 import rclpy
 from rclpy.node import Node as RosNode
-from std_msgs.msg import String
+from std_msgs.msg import String, Empty
 
 from camera_driver.shared_state import (
     frame_lock, current_frames,
@@ -520,6 +521,10 @@ class OakDNode(RosNode):
             target=run_server, args=(port,), daemon=True)
         self._flask_thread.start()
 
+        # imu buttons subscription
+        self.create_subscription(Empty, '/imu/zero',  lambda _: self._imu_zero(),  10)
+        self.create_subscription(Empty, '/imu/reset', lambda _: self._imu_reset(), 10)
+
         self._print_endpoints(port)
 
     def _declare_and_load_params(self):
@@ -576,7 +581,7 @@ class OakDNode(RosNode):
         #   → len(labels) must equal len(thresholds) - 1
         self.declare_parameter(
             "position_thresholds",
-            [0.0, 5.0, 15.0, 75.0, 85.0, 90.0])
+            [0.0, 2.0, 10.0, 75.0, 85.0, 90.0])
         self.declare_parameter(
             "position_labels",
             ["horizontal", "horizontal_buckling", "transitional", "vertical_buckling", "vertical"])
@@ -626,7 +631,20 @@ class OakDNode(RosNode):
             self.get_logger().info(f"  [{iface}] http://{ip}:{port}/")
         self.get_logger().info(f"  Publishing /robot_position (String)")
         self.get_logger().info("=" * 50)
+        
+    def _imu_zero(self):
+        with state.imu_lock:
+            state.imu_euler_offsets["pitch"] = state.imu_data["orientation"]["pitch"]
+            state.imu_euler_offsets["roll"]  = state.imu_data["orientation"]["roll"]
+            state.imu_euler_offsets["yaw"]   = state.imu_data["orientation"]["yaw"]
+        self.get_logger().info("IMU zeroed via joystick button.")
 
+    def _imu_reset(self):
+        with state.imu_lock:
+            state.imu_euler_offsets["pitch"] = 0.0
+            state.imu_euler_offsets["roll"]  = 0.0
+            state.imu_euler_offsets["yaw"]   = 0.0
+        self.get_logger().info("IMU reference cleared via joystick button.")
 
 # ═══════════════════════════════════════════════════════
 # Entry point
