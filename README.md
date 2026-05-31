@@ -7,3 +7,6 @@ ros2 launch robot_bringup robot.launch.py
 
 on another terminal
 ros2 run joy joy_node
+
+link
+http://10.42.0.106:8080/
