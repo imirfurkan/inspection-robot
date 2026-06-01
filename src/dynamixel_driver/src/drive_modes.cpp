@@ -78,21 +78,21 @@ std::map<std::string, DriveModeDef> buildDefaultModes(const MotorLayout& m)
     };
 
     // ────────────────────────────────────────────────────────────
-    // drive_front_nudge — Rear hold (vel=0) + front current
+    //  
     // ────────────────────────────────────────────────────────────
-    modes["drive_front_nudge"] = {
-        .name = "drive_front_nudge",
+    modes["rear_geri_front_ileri"] = {
+        .name = "rear_geri_front_ileri",
         .forward_profile = {
-            {FL, {ControlType::CURRENT, 1.0f, false}},
-            {FR, {ControlType::CURRENT, 1.0f, false}},
-            {RL, {ControlType::HOLD,    0.0f, false}},
-            {RR, {ControlType::HOLD,    0.0f, false}},
+            {FL, {ControlType::VELOCITY, 0.35f, false}},
+            {FR, {ControlType::VELOCITY, 0.35f, false}},
+            {RL, {ControlType::VELOCITY, 1.0f, true}},
+            {RR, {ControlType::VELOCITY, 1.0f, true}},
         },
         .reverse_profile = {
-            {FL, {ControlType::CURRENT, 1.0f, false}},
-            {FR, {ControlType::CURRENT, 1.0f, false}},
-            {RL, {ControlType::HOLD,    0.0f, false}},
-            {RR, {ControlType::HOLD,    0.0f, false}},
+            {FL, {ControlType::VELOCITY, 0.35f, false}},
+            {FR, {ControlType::VELOCITY, 0.35f, false}},
+            {RL, {ControlType::VELOCITY, 1.0f, true}},
+            {RR, {ControlType::VELOCITY, 1.0f, true}},
         }
     };
 

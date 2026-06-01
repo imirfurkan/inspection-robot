@@ -506,7 +506,7 @@ private:
             uint16_t raw_v = 0;
             packet_handler_->read2ByteTxRx(port_handler_, id, ADDR_PRESENT_VOLTAGE, &raw_v);
 
-            msg.data.push_back(static_cast<float>(vel));
+            msg.data.push_back(static_cast<float>(vel) * 0.229f);  // now in RPM
             msg.data.push_back(static_cast<float>(temp));
             msg.data.push_back(static_cast<float>(raw_v) / 10.0f);
         }
