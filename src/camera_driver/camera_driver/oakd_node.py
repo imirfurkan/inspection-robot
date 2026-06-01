@@ -37,7 +37,7 @@ except ImportError:
 
 import rclpy
 from rclpy.node import Node as RosNode
-from std_msgs.msg import String, Empty
+from std_msgs.msg import String, Empty, Float32MultiArray
 
 from camera_driver.shared_state import (
     frame_lock, current_frames,
@@ -46,6 +46,7 @@ from camera_driver.shared_state import (
     recording_lock,
     pipeline_stop, pipeline_restart, controls_dirty,
     position_lock, position_state, position_ranges,
+    motor_status_lock,
 )
 import camera_driver.shared_state as state
 
@@ -433,6 +434,15 @@ def pipeline_worker(ros_node):
                                 sensor_yaw = math.atan2(siny, cosy) * 57.2958
 
                                 off = state.imu_euler_offsets
+
+                                # ── Auto-zero on first valid IMU packet ──
+                                if state.imu_auto_zero_pending:
+                                    off["pitch"] = sensor_roll
+                                    off["roll"]  = sensor_pitch
+                                    off["yaw"]   = sensor_yaw
+                                    state.imu_auto_zero_pending = False
+                                    ros_node.get_logger().info("IMU auto-zeroed at startup.")
+
                                 # Swap pitch/roll (sensor axes don't match robot axes)
                                 imu_data["orientation"]["pitch"] = round(sensor_roll  - off["pitch"], 1)
                                 imu_data["orientation"]["roll"]  = round(sensor_pitch - off["roll"],  1)
@@ -509,14 +519,9 @@ class OakDNode(RosNode):
             self.get_logger().error(
                 "No OAK-D devices found! Check USB.")
             return
-
-        # LED driver (same process, shares Flask server)
-        try:
-            from led_driver.led_node import LedDriverNode
-            state.led_node_ref = LedDriverNode()
-            self.get_logger().info("LED driver loaded.")
-        except Exception as e:
-            self.get_logger().warn(f"LED driver not available: {e}")
+        
+        # Publisher for LED commands → led_node subscribes to /led/cmd
+        state.led_cmd_pub = self.create_publisher(String, '/led/cmd', 10)
 
         self.get_logger().info(f"Found {len(devices)} OAK device(s)")
 
@@ -533,9 +538,15 @@ class OakDNode(RosNode):
             target=run_server, args=(port,), daemon=True)
         self._flask_thread.start()
 
-        # imu buttons subscription
+        # IMU button subscriptions
         self.create_subscription(Empty, '/imu/zero',  lambda _: self._imu_zero(),  10)
         self.create_subscription(Empty, '/imu/reset', lambda _: self._imu_reset(), 10)
+
+        # Motor status subscription — bridges /motor_status topic into shared state for the dashboard
+        # Data layout per motor: [rpm, temp, voltage]; order matches active_ids_: RL=1, FR=6, RR=8, FL=10
+        self._motor_labels = ['RL', 'FR', 'RR', 'FL']
+        self.create_subscription(
+            Float32MultiArray, '/motor_status', self._motor_status_cb, 10)
 
         self._print_endpoints(port)
 
@@ -643,12 +654,12 @@ class OakDNode(RosNode):
             self.get_logger().info(f"  [{iface}] http://{ip}:{port}/")
         self.get_logger().info(f"  Publishing /robot_position (String)")
         self.get_logger().info("=" * 50)
-        
+
     def _imu_zero(self):
         with state.imu_lock:
-            state.imu_euler_offsets["pitch"] = state.imu_data["orientation"]["pitch"]
-            state.imu_euler_offsets["roll"]  = state.imu_data["orientation"]["roll"]
-            state.imu_euler_offsets["yaw"]   = state.imu_data["orientation"]["yaw"]
+            state.imu_euler_offsets["pitch"] += state.imu_data["orientation"]["pitch"]
+            state.imu_euler_offsets["roll"]  += state.imu_data["orientation"]["roll"]
+            state.imu_euler_offsets["yaw"]   += state.imu_data["orientation"]["yaw"]
         self.get_logger().info("IMU zeroed via joystick button.")
 
     def _imu_reset(self):
@@ -657,6 +668,25 @@ class OakDNode(RosNode):
             state.imu_euler_offsets["roll"]  = 0.0
             state.imu_euler_offsets["yaw"]   = 0.0
         self.get_logger().info("IMU reference cleared via joystick button.")
+
+    def _motor_status_cb(self, msg):
+        """Bridge /motor_status topic into shared_state for the Flask dashboard.
+        Data layout per motor: [rpm, temp, voltage]
+        Order matches dynamixel active_ids_ (ping order): RL=1, FR=6, RR=8, FL=10
+        """
+        data = msg.data
+        entries = []
+        for i in range(len(data) // 3):
+            label = self._motor_labels[i] if i < len(self._motor_labels) else f'M{i}'
+            entries.append({
+                'label':   label,
+                'rpm':     round(float(data[i*3]),   1),
+                'temp':    round(float(data[i*3+1]), 1),
+                'voltage': round(float(data[i*3+2]), 2),
+            })
+        with motor_status_lock:
+            state.motor_status = entries
+
 
 # ═══════════════════════════════════════════════════════
 # Entry point

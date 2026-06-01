@@ -13,6 +13,8 @@ import cv2
 import numpy as np
 from flask import Flask, Response, jsonify, request, render_template_string
 
+from std_msgs.msg import String
+
 from camera_driver.shared_state import (
     frame_lock, current_frames,
     config_lock, current_config,
@@ -21,6 +23,7 @@ from camera_driver.shared_state import (
     pipeline_restart, controls_dirty,
     device_ref,
     position_lock, position_state, position_ranges,
+    motor_status_lock,
 )
 import camera_driver.shared_state as state
 from camera_driver.dashboard.template import DASHBOARD_HTML
@@ -219,14 +222,15 @@ def api_imu():
         data = dict(imu_data)
     return jsonify(data)
 
-
 @flask_app.route("/api/imu/zero", methods=["POST"])
 def api_imu_zero():
-    """Set current orientation as the zero reference (per-axis Euler offsets)."""
+    """Set current orientation as zero by accumulating offsets."""
     with imu_lock:
-        state.imu_euler_offsets["pitch"] = imu_data["orientation"]["pitch"]
-        state.imu_euler_offsets["roll"]  = imu_data["orientation"]["roll"]
-        state.imu_euler_offsets["yaw"]   = imu_data["orientation"]["yaw"]
+        # Add current displayed value to existing offset (not replace)
+        # so zeroing twice doesn't double-zero
+        state.imu_euler_offsets["pitch"] += imu_data["orientation"]["pitch"]
+        state.imu_euler_offsets["roll"]  += imu_data["orientation"]["roll"]
+        state.imu_euler_offsets["yaw"]   += imu_data["orientation"]["yaw"]
     return jsonify({"ok": True, "msg": "IMU zeroed."})
 
 @flask_app.route("/api/imu/reset", methods=["POST"])
@@ -252,25 +256,35 @@ def api_position():
     ]
     return jsonify(data)
 
+
+@flask_app.route("/api/motor_status")
+def api_motor_status():
+    """Return latest motor telemetry as JSON.
+    Each entry: {label, rpm, temp, voltage}
+    Order matches dynamixel active_ids_: RL=1, FR=6, RR=8, FL=10
+    """
+    with motor_status_lock:
+        data = list(state.motor_status)
+    return jsonify(data)
+
 @flask_app.route("/api/led", methods=["GET"])
 def api_led_get():
-    if state.led_node_ref is None:
-        return jsonify({"error": "LED node not available"}), 503
-    return jsonify(state.led_node_ref.get_state())
+    # No state readback over topic; return last-known from shared state
+    return jsonify({"ok": True})
 
 @flask_app.route("/api/led", methods=["POST"])
 def api_led_set():
-    if state.led_node_ref is None:
-        return jsonify({"error": "LED node not available"}), 503
+    if state.led_cmd_pub is None:
+        return jsonify({"error": "LED publisher not ready"}), 503
     data = request.get_json(force=True)
-    mode = data.get('mode')
+    # Format: "mode" or "set:0.75" for brightness
+    mode = data.get('mode', '')
     brightness = data.get('brightness')
-    if mode:
-        state.led_node_ref.set_mode(mode, brightness)
-    elif brightness is not None:
-        state.led_node_ref.set_mode('set', brightness)
+    payload = f"set:{brightness:.2f}" if (mode in ('set', None) and brightness is not None) else mode
+    msg = String()
+    msg.data = payload
+    state.led_cmd_pub.publish(msg)
     return jsonify({"ok": True})
-
 # ═══════════════════════════════════════════════════════
 # Server entry point
 # ═══════════════════════════════════════════════════════

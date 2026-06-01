@@ -55,6 +55,19 @@ imu_ref_set = False
 # Per-axis Euler offsets (set by Zero IMU)
 imu_euler_offsets = {"pitch": 0.0, "roll": 0.0, "yaw": 0.0}
 
+# Auto-zero on first valid IMU packet
+imu_auto_zero_pending = True
+
+# ═══════════════════════════════════════════════════════
+# Motor status (written by oakd_node /motor_status sub, read by dashboard)
+# ═══════════════════════════════════════════════════════
+# Layout: list of {label, rpm, temp, voltage} for each active motor.
+# Order matches dynamixel_driver active_ids_ (ping order): RL=1, FR=6, RR=8, FL=10
+
+motor_status_lock = threading.Lock()
+motor_status = []
+
+
 # ═══════════════════════════════════════════════════════
 # Robot position state (pitch-based classification)
 # ═══════════════════════════════════════════════════════
@@ -93,8 +106,8 @@ controls_dirty = threading.Event()
 
 ####
 
-# LED node reference (set by oakd_node after led_node starts)
-led_node_ref = None
+# Publisher set by oakd_node; used by server.py to send LED commands
+led_cmd_pub = None   # rclpy publisher for /led/cmd (std_msgs/String)
 
 ####
 

@@ -92,7 +92,8 @@ public:
         this->declare_parameter("front_right_id", 6);
         this->declare_parameter("rear_left_id", 1);
         this->declare_parameter("rear_right_id", 8);
-        this->declare_parameter("max_velocity", 100);
+        this->declare_parameter("max_velocity", 280);
+        this->declare_parameter("vertical_transition_velocity", 90);
         this->declare_parameter("max_current_ma", 400.0);
         this->declare_parameter("deadzone", 0.15);
         this->declare_parameter("loop_rate", 50.0);
@@ -114,6 +115,7 @@ public:
         layout_.rear_right  = static_cast<uint8_t>(this->get_parameter("rear_right_id").as_int());
 
         max_velocity_      = this->get_parameter("max_velocity").as_int();
+        vertical_transition_velocity_ = this->get_parameter("vertical_transition_velocity").as_int();
         max_current_ma_    = this->get_parameter("max_current_ma").as_double();
         max_current_units_ = static_cast<int16_t>(max_current_ma_ / CURRENT_UNIT_MA);
         double loop_rate   = this->get_parameter("loop_rate").as_double();
@@ -543,6 +545,7 @@ private:
     std::string port_name_;
     int         baudrate_;
     int         max_velocity_;
+    int         vertical_transition_velocity_;
     double      max_current_ma_;
     int16_t     max_current_units_;
     // Robot position state — updated by /robot_position subscription

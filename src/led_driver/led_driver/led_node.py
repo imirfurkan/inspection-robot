@@ -50,6 +50,8 @@ class LedDriverNode(Node):
 
         self.create_subscription(Float32, '/led_brightness', self._cb_brightness, 10)
         self.create_subscription(String,  '/led_mode',       self._cb_mode,       10)
+        self.create_subscription(String, '/led/cmd', self._on_cmd, 10)
+
 
     # ── ROS callbacks ──────────────────────────────────────────────
 
@@ -89,6 +91,13 @@ class LedDriverNode(Node):
     def get_state(self):
         with self._lock:
             return {'mode': self._mode, 'brightness': self._brightness}
+        
+    def _on_cmd(self, msg):
+        # Parse "set:0.75" or plain mode names
+        if msg.data.startswith('set:'):
+            self.set_mode('set', float(msg.data.split(':')[1]))
+        else:
+            self.set_mode(msg.data)
 
     # ── Internal ───────────────────────────────────────────────────
 

@@ -472,6 +472,33 @@ DASHBOARD_HTML = """
       font-size: 10px;
     }
 
+    /* ─── MOTOR STATUS ─── */
+    .motor-grid { display: flex; flex-direction: column; gap: 6px; }
+    .motor-row {
+      display: grid;
+      grid-template-columns: 32px 1fr 1fr 1fr;
+      gap: 4px;
+      align-items: center;
+      padding: 6px 8px;
+      background: var(--bg-raised);
+      border-radius: 4px;
+      border: 1px solid var(--border);
+    }
+    .motor-id {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--robot-ops);
+    }
+    .motor-cell {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      color: var(--text-muted);
+      text-align: right;
+    }
+    .motor-cell span { color: var(--text-secondary); }
+    .motor-offline { font-size: 12px; color: var(--text-muted); }
+
     /* ─── RESPONSIVE ─── */
     @media (max-width: 900px) {
       .layout { flex-direction: column; }
@@ -528,16 +555,101 @@ DASHBOARD_HTML = """
 
       <!-- TABS -->
       <div class="tabs">
-        <div class="tab active-front" data-tab="front" onclick="switchTab('front')">Front Cam</div>
+        <div class="tab active-robot" data-tab="robot" onclick="switchTab('robot')">Robot</div>
+        <div class="tab" data-tab="front" onclick="switchTab('front')">Front Cam</div>
         <div class="tab" data-tab="rear" onclick="switchTab('rear')">Rear Cam</div>
-        <div class="tab" data-tab="robot" onclick="switchTab('robot')">Robot</div>
       </div>
 
       <!-- TAB CONTENT -->
       <div class="tab-content">
 
+        <!-- ════ ROBOT OPS TAB ════ -->
+        <div class="tab-pane active" id="pane-robot">
+
+          <!-- ──── POSITION STATE ──── -->
+          <div class="section">
+            <div class="section-title robot">Robot Position</div>
+            <div class="position-display">
+              <div class="position-current">
+                <span class="position-indicator" id="pos-indicator" style="background: var(--text-muted)"></span>
+                <span class="position-label-big" id="pos-label">UNKNOWN</span>
+                <span class="position-pitch" id="pos-pitch">0.0°</span>
+              </div>
+              <div class="position-ranges" id="pos-ranges">
+                <!-- Populated dynamically from /api/position -->
+              </div>
+            </div>
+          </div>
+
+          <!-- ──── IMU ORIENTATION ──── -->
+          <div class="section">
+            <div class="section-title robot">IMU — Orientation</div>
+            <div class="imu-grid">
+              <div class="imu-axis">
+                <span class="imu-label" style="width:40px">Pitch</span>
+                <div class="imu-bar-wrap"><div class="imu-bar accel-x" id="bar-pitch"></div></div>
+                <span class="imu-val" id="imu-pitch">0.0°</span>
+              </div>
+              <div class="imu-axis">
+                <span class="imu-label" style="width:40px">Roll</span>
+                <div class="imu-bar-wrap"><div class="imu-bar accel-y" id="bar-roll"></div></div>
+                <span class="imu-val" id="imu-roll">0.0°</span>
+              </div>
+              <div class="imu-axis">
+                <span class="imu-label" style="width:40px">Yaw</span>
+                <div class="imu-bar-wrap"><div class="imu-bar accel-z" id="bar-yaw"></div></div>
+                <span class="imu-val" id="imu-yaw">0.0°</span>
+              </div>
+            </div>
+            <div class="imu-unit">degrees</div>
+            <div class="btn-row" style="margin-top:10px">
+              <button onclick="zeroIMU()">Zero IMU</button>
+              <button onclick="resetIMU()">Reset</button>
+            </div>
+          </div>
+
+          <!-- ──── LED STRIP ──── -->
+            <div class="section" id="led-section" style="margin-top: 8px;">
+            <div class="section-title robot">LED Strip</div>
+            <div class="control-row">
+              <label>Brightness</label>
+              <input type="range" min="0" max="100" value="0"
+                    oninput="ledBrightness(parseInt(this.value), this)">
+              <span class="val" id="led-brightness-val">0</span>
+            </div>
+            <div class="btn-row">
+              <button onclick="ledMode('on')">On</button>
+              <button onclick="ledMode('off')">Off</button>
+              <button onclick="ledMode('breath')">Breath</button>
+            </div>
+          </div>
+
+          <!-- ──── MOTOR STATUS ──── -->
+          <div class="section">
+            <div class="section-title robot">Motor Status</div>
+            <!-- Header row -->
+            <div class="motor-row" style="background: transparent; border-color: transparent; padding-bottom: 2px;">
+              <span class="motor-id" style="color: var(--text-muted);">ID</span>
+              <span class="motor-cell" style="color: var(--text-muted);">RPM</span>
+              <span class="motor-cell" style="color: var(--text-muted);">TEMP</span>
+              <span class="motor-cell" style="color: var(--text-muted);">VOLT</span>
+            </div>
+            <div id="motor-status-grid" class="motor-grid">
+              <div class="motor-offline">Waiting for motor data...</div>
+            </div>
+          </div>
+
+          <div class="section">
+            <div class="section-title robot">Status</div>
+            <div style="color: var(--text-muted); font-size: 13px; line-height: 2;">
+              Battery, joystick mapping coming soon.
+            </div>
+          </div>
+
+        </div>
+        
         <!-- ════ FRONT CAMERA TAB ════ -->
-        <div class="tab-pane active" id="pane-front">
+        <div class="tab-pane" id="pane-front">
 
           <div class="section">
             <div class="section-title front">Stream</div>
@@ -903,117 +1015,6 @@ DASHBOARD_HTML = """
 
         </div>
 
-        <!-- ════ ROBOT OPS TAB ════ -->
-        <div class="tab-pane" id="pane-robot">
-
-          <!-- ──── POSITION STATE ──── -->
-          <div class="section">
-            <div class="section-title robot">Robot Position</div>
-            <div class="position-display">
-              <div class="position-current">
-                <span class="position-indicator" id="pos-indicator" style="background: var(--text-muted)"></span>
-                <span class="position-label-big" id="pos-label">UNKNOWN</span>
-                <span class="position-pitch" id="pos-pitch">0.0°</span>
-              </div>
-              <div class="position-ranges" id="pos-ranges">
-                <!-- Populated dynamically from /api/position -->
-              </div>
-            </div>
-          </div>
-
-          <div class="section">
-            <div class="section-title robot">IMU — Accelerometer</div>
-            <div class="imu-grid">
-              <div class="imu-axis">
-                <span class="imu-label">X</span>
-                <div class="imu-bar-wrap"><div class="imu-bar accel-x" id="bar-ax"></div></div>
-                <span class="imu-val" id="imu-ax">0.000</span>
-              </div>
-              <div class="imu-axis">
-                <span class="imu-label">Y</span>
-                <div class="imu-bar-wrap"><div class="imu-bar accel-y" id="bar-ay"></div></div>
-                <span class="imu-val" id="imu-ay">0.000</span>
-              </div>
-              <div class="imu-axis">
-                <span class="imu-label">Z</span>
-                <div class="imu-bar-wrap"><div class="imu-bar accel-z" id="bar-az"></div></div>
-                <span class="imu-val" id="imu-az">0.000</span>
-              </div>
-            </div>
-            <div class="imu-unit">m/s²</div>
-          </div>
-
-          <div class="section">
-            <div class="section-title robot">IMU — Gyroscope</div>
-            <div class="imu-grid">
-              <div class="imu-axis">
-                <span class="imu-label">X</span>
-                <div class="imu-bar-wrap"><div class="imu-bar gyro-x" id="bar-gx"></div></div>
-                <span class="imu-val" id="imu-gx">0.000</span>
-              </div>
-              <div class="imu-axis">
-                <span class="imu-label">Y</span>
-                <div class="imu-bar-wrap"><div class="imu-bar gyro-y" id="bar-gy"></div></div>
-                <span class="imu-val" id="imu-gy">0.000</span>
-              </div>
-              <div class="imu-axis">
-                <span class="imu-label">Z</span>
-                <div class="imu-bar-wrap"><div class="imu-bar gyro-z" id="bar-gz"></div></div>
-                <span class="imu-val" id="imu-gz">0.000</span>
-              </div>
-            </div>
-            <div class="imu-unit">rad/s</div>
-          </div>
-
-            <div class="imu-grid">
-              <div class="imu-axis">
-                <span class="imu-label" style="width:40px">Pitch</span>
-                <div class="imu-bar-wrap"><div class="imu-bar accel-x" id="bar-pitch"></div></div>
-                <span class="imu-val" id="imu-pitch">0.0°</span>
-              </div>
-              <div class="imu-axis">
-                <span class="imu-label" style="width:40px">Roll</span>
-                <div class="imu-bar-wrap"><div class="imu-bar accel-y" id="bar-roll"></div></div>
-                <span class="imu-val" id="imu-roll">0.0°</span>
-              </div>
-              <div class="imu-axis">
-                <span class="imu-label" style="width:40px">Yaw</span>
-                <div class="imu-bar-wrap"><div class="imu-bar accel-z" id="bar-yaw"></div></div>
-                <span class="imu-val" id="imu-yaw">0.0°</span>
-              </div>
-            </div>
-            <div class="imu-unit">degrees</div>
-            <div class="btn-row" style="margin-top:10px">
-              <button onclick="zeroIMU()">Zero IMU</button>
-              <button onclick="resetIMU()">Reset</button>
-            </div>
-          </div>
-
-          <div class="section">
-            <div class="section-title robot">LED Strip</div>
-            <div class="control-row">
-              <label>Brightness</label>
-              <input type="range" min="0" max="100" value="0"
-                    oninput="ledBrightness(parseInt(this.value), this)">
-              <span class="val" id="led-brightness-val">0</span>
-            </div>
-            <div class="btn-row">
-              <button onclick="ledMode('on')">On</button>
-              <button onclick="ledMode('off')">Off</button>
-              <button onclick="ledMode('breath')">Breath</button>
-              <button onclick="ledMode('strobe')">Strobe</button>
-            </div>
-          </div>
-          
-          <div class="section">
-            <div class="section-title robot">Status</div>
-            <div style="color: var(--text-muted); font-size: 13px; line-height: 2;">
-              Battery, joystick mapping, LED controls coming soon.
-            </div>
-          </div>
-
-        </div>
-
       </div>
     </div>
   </div>
@@ -1092,14 +1093,27 @@ DASHBOARD_HTML = """
 
     // ── LED controls ──
     let _ledTimer = null;
+    let _ledCurrentMode = 'off';
+
     function ledMode(mode) {
+      _ledCurrentMode = mode;
+      const brightness = mode === 'on' ? 1.0 : (mode === 'off' ? 0.0 : null);
+      // Sync slider when switching to on/off
+      if (brightness !== null) {
+        const pct = Math.round(brightness * 100);
+        document.querySelector('#led-section input[type=range]').value = pct;
+        document.getElementById('led-brightness-val').textContent = pct;
+      }
       fetch(FRONT_BASE + '/api/led', {
         method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({mode})
+        body: JSON.stringify({mode, brightness})
       });
     }
+
     function ledBrightness(pct, el) {
       document.getElementById('led-brightness-val').textContent = pct;
+      // Moving slider implies 'on' (unless at 0)
+      _ledCurrentMode = pct > 0 ? 'on' : 'off';
       clearTimeout(_ledTimer);
       _ledTimer = setTimeout(() => {
         fetch(FRONT_BASE + '/api/led', {
@@ -1107,7 +1121,7 @@ DASHBOARD_HTML = """
           body: JSON.stringify({mode: 'set', brightness: pct / 100.0})
         });
       }, 150);
-}
+    }
 
     // ── Rear camera controls ──
     let _rearTimer = null;
@@ -1175,42 +1189,23 @@ DASHBOARD_HTML = """
       }
     }
 
-    let _imuActive = false;
     function pollIMU() {
       // Only poll when robot tab is visible
       const robotPane = document.getElementById('pane-robot');
       if (!robotPane || !robotPane.classList.contains('active')) return;
 
       fetch(FRONT_BASE + '/api/imu').then(r => r.json()).then(d => {
-        _imuActive = true;
-        const a = d.accel, g = d.gyro;
-        document.getElementById('imu-ax').textContent = a.x.toFixed(3);
-        document.getElementById('imu-ay').textContent = a.y.toFixed(3);
-        document.getElementById('imu-az').textContent = a.z.toFixed(3);
-        document.getElementById('imu-gx').textContent = g.x.toFixed(3);
-        document.getElementById('imu-gy').textContent = g.y.toFixed(3);
-        document.getElementById('imu-gz').textContent = g.z.toFixed(3);
-
-        updateBar('bar-ax', a.x, 15);
-        updateBar('bar-ay', a.y, 15);
-        updateBar('bar-az', a.z, 15);
-        updateBar('bar-gx', g.x, 5);
-        updateBar('bar-gy', g.y, 5);
-        updateBar('bar-gz', g.z, 5);
-
-        // Use server-computed orientation (with reference quaternion applied)
+        // Use server-computed orientation (with Euler offsets applied)
         const pitch = d.orientation.pitch;
-        const roll = d.orientation.roll;
-        const yaw = d.orientation.yaw;
+        const roll  = d.orientation.roll;
+        const yaw   = d.orientation.yaw;
 
         document.getElementById('imu-pitch').textContent = pitch.toFixed(1) + '°';
-        document.getElementById('imu-roll').textContent = roll.toFixed(1) + '°';
-        document.getElementById('imu-yaw').textContent = yaw.toFixed(1) + '°';
+        document.getElementById('imu-roll').textContent  = roll.toFixed(1)  + '°';
+        document.getElementById('imu-yaw').textContent   = yaw.toFixed(1)   + '°';
         updateBar('bar-pitch', pitch, 90);
-        updateBar('bar-roll', roll, 90);
-        updateBar('bar-yaw', yaw, 180);
-
-        drawTilt(a.x, a.y, a.z);
+        updateBar('bar-roll',  roll,  90);
+        updateBar('bar-yaw',   yaw,  180);
       }).catch(() => {});
     }
     setInterval(pollIMU, 100);  // 10Hz update for smooth display
@@ -1224,7 +1219,6 @@ DASHBOARD_HTML = """
 
     // ── Position state polling ──
     let _posRangesBuilt = false;
-    let _lastPosLabel = '';
 
     function pollPosition() {
       const robotPane = document.getElementById('pane-robot');
@@ -1267,20 +1261,35 @@ DASHBOARD_HTML = """
         // Highlight the active range row
         if (_posRangesBuilt) {
           document.querySelectorAll('.position-range-row').forEach(row => {
-            if (row.dataset.label === label) {
-              row.classList.add('active');
-            } else {
-              row.classList.remove('active');
-            }
+            row.classList.toggle('active', row.dataset.label === label);
           });
         }
-
-        _lastPosLabel = label;
       }).catch(() => {});
     }
+    setInterval(pollPosition, 200);  // 5Hz
 
-    // Poll position at 5Hz (matches IMU update, doesn't need to be faster)
-    setInterval(pollPosition, 200);
+    // ── Motor status polling ──
+    function pollMotorStatus() {
+      const robotPane = document.getElementById('pane-robot');
+      if (!robotPane || !robotPane.classList.contains('active')) return;
+
+      fetch(FRONT_BASE + '/api/motor_status').then(r => r.json()).then(motors => {
+        const grid = document.getElementById('motor-status-grid');
+        if (!motors.length) {
+          grid.innerHTML = '<div class="motor-offline">No motor data</div>';
+          return;
+        }
+        grid.innerHTML = motors.map(m =>
+          `<div class="motor-row">
+            <span class="motor-id">${m.label}</span>
+            <span class="motor-cell"><span>${m.rpm.toFixed(1)}</span></span>
+            <span class="motor-cell"><span>${m.temp.toFixed(0)}</span> °C</span>
+            <span class="motor-cell"><span>${m.voltage.toFixed(1)}</span> V</span>
+          </div>`
+        ).join('');
+      }).catch(() => {});
+    }
+    setInterval(pollMotorStatus, 500);  // 2Hz
   </script>
 </body>
 </html>
