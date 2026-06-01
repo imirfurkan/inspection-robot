@@ -990,6 +990,22 @@ DASHBOARD_HTML = """
           </div>
 
           <div class="section">
+            <div class="section-title robot">LED Strip</div>
+            <div class="control-row">
+              <label>Brightness</label>
+              <input type="range" min="0" max="100" value="0"
+                    oninput="ledBrightness(parseInt(this.value), this)">
+              <span class="val" id="led-brightness-val">0</span>
+            </div>
+            <div class="btn-row">
+              <button onclick="ledMode('on')">On</button>
+              <button onclick="ledMode('off')">Off</button>
+              <button onclick="ledMode('breath')">Breath</button>
+              <button onclick="ledMode('strobe')">Strobe</button>
+            </div>
+          </div>
+          
+          <div class="section">
             <div class="section-title robot">Status</div>
             <div style="color: var(--text-muted); font-size: 13px; line-height: 2;">
               Battery, joystick mapping, LED controls coming soon.
@@ -1073,6 +1089,25 @@ DASHBOARD_HTML = """
           }
         });
     }
+
+    // ── LED controls ──
+    let _ledTimer = null;
+    function ledMode(mode) {
+      fetch(FRONT_BASE + '/api/led', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({mode})
+      });
+    }
+    function ledBrightness(pct, el) {
+      document.getElementById('led-brightness-val').textContent = pct;
+      clearTimeout(_ledTimer);
+      _ledTimer = setTimeout(() => {
+        fetch(FRONT_BASE + '/api/led', {
+          method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({mode: 'set', brightness: pct / 100.0})
+        });
+      }, 150);
+}
 
     // ── Rear camera controls ──
     let _rearTimer = null;

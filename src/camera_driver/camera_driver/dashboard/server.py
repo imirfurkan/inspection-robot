@@ -252,6 +252,24 @@ def api_position():
     ]
     return jsonify(data)
 
+@flask_app.route("/api/led", methods=["GET"])
+def api_led_get():
+    if state.led_node_ref is None:
+        return jsonify({"error": "LED node not available"}), 503
+    return jsonify(state.led_node_ref.get_state())
+
+@flask_app.route("/api/led", methods=["POST"])
+def api_led_set():
+    if state.led_node_ref is None:
+        return jsonify({"error": "LED node not available"}), 503
+    data = request.get_json(force=True)
+    mode = data.get('mode')
+    brightness = data.get('brightness')
+    if mode:
+        state.led_node_ref.set_mode(mode, brightness)
+    elif brightness is not None:
+        state.led_node_ref.set_mode('set', brightness)
+    return jsonify({"ok": True})
 
 # ═══════════════════════════════════════════════════════
 # Server entry point

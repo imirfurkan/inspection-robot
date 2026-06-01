@@ -1,0 +1,4 @@
+led_driver_node:
+  ros__parameters:
+    gpio_pin: 13
+    default_brightness: 0.0

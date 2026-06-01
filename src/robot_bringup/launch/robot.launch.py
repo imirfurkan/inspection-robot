@@ -45,4 +45,12 @@ def generate_launch_description():
                              'launch', 'oakd.launch.py')
             )
         ),
+
+        # LED strip
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(
+                os.path.join(get_package_share_directory('led_driver'),
+                            'launch', 'led.launch.py')
+            )
+        ),
     ])

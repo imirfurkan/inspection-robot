@@ -162,8 +162,7 @@ private:
                     if (!tank_active_ || tank_direction_ != 1) {
                         publishMode("tank_turn_right");
                         tank_active_    = true;
-                        tank_direction_ = 1;
-                    }
+                        tank_direction_ = 1;                    }
                 } else {
                     if (!tank_active_ || tank_direction_ != -1) {
                         publishMode("tank_turn_left");
@@ -175,6 +174,7 @@ private:
                 // Publish twist axis as linear.x speed (ignore Y stick during tank)
                 auto cmd = geometry_msgs::msg::Twist();
                 cmd.linear.x = std::abs(twist) * max_linear_speed_;  // always positive; mode handles direction
+                RCLCPP_INFO(this->get_logger(), "cmd_vel: linear=%.3f", cmd.linear.x);
                 cmd_pub_->publish(cmd);
                 return;  // skip normal axis mapping below
 

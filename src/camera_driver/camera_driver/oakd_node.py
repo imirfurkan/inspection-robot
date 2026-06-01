@@ -418,7 +418,11 @@ def pipeline_worker(ros_node):
                                 import math
                                 sinr = 2 * (qr * qi + qj * qk)
                                 cosr = 1 - 2 * (qi * qi + qj * qj)
-                                sensor_roll = math.atan2(sinr, cosr) * 57.2958
+                                # sensor_roll = math.atan2(sinr, cosr) * 57.2958
+                                _sr = math.atan2(sinr, cosr) * -57.2958
+                                # Fold atan2 [-180,180] → [-90,90] (robot pitch can't exceed ±90°)
+                                sensor_roll = 180.0 - _sr if _sr > 90.0 else (-180.0 - _sr if _sr < -90.0 else _sr)
+
 
                                 sinp = 2 * (qr * qj - qk * qi)
                                 sensor_pitch = (math.copysign(90, sinp) if abs(sinp) >= 1
@@ -505,6 +509,14 @@ class OakDNode(RosNode):
             self.get_logger().error(
                 "No OAK-D devices found! Check USB.")
             return
+
+        # LED driver (same process, shares Flask server)
+        try:
+            from led_driver.led_node import LedDriverNode
+            state.led_node_ref = LedDriverNode()
+            self.get_logger().info("LED driver loaded.")
+        except Exception as e:
+            self.get_logger().warn(f"LED driver not available: {e}")
 
         self.get_logger().info(f"Found {len(devices)} OAK device(s)")
 

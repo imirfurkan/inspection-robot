@@ -91,6 +91,12 @@ pipeline_stop = threading.Event()
 pipeline_restart = threading.Event()
 controls_dirty = threading.Event()
 
+####
+
+# LED node reference (set by oakd_node after led_node starts)
+led_node_ref = None
+
+####
 
 # ═══════════════════════════════════════════════════════
 # Camera config (modified by dashboard, read by pipeline)

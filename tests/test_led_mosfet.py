@@ -30,7 +30,7 @@ except ImportError:
     print("  pip install gpiozero lgpio --break-system-packages")
     sys.exit(1)
 
-MOSFET_GPIO = 12
+MOSFET_GPIO = 13
 
 
 def main():
