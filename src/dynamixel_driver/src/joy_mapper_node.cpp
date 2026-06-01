@@ -32,6 +32,7 @@
 #include <geometry_msgs/msg/twist.hpp>
 #include <std_msgs/msg/empty.hpp>
 #include <std_msgs/msg/string.hpp>
+#include <std_msgs/msg/bool.hpp>
 #include <cmath>
 #include <vector>
 #include <string>
@@ -97,6 +98,8 @@ public:
         mode_pub_ = this->create_publisher<std_msgs::msg::String>("/drive_mode", 10);
         imu_zero_pub_  = this->create_publisher<std_msgs::msg::Empty>("/imu/zero", 10);
         imu_reset_pub_ = this->create_publisher<std_msgs::msg::Empty>("/imu/reset", 10);
+        vel_limit_pub_ = this->create_publisher<std_msgs::msg::Bool>("/velocity_limit", 10);
+
 
         joy_sub_ = this->create_subscription<sensor_msgs::msg::Joy>(
             "/joy", 10,
@@ -138,15 +141,25 @@ private:
             }
         }
 
-        // ── IMU zero/reset buttons ──
-        if (msg->buttons.size() > 4 && msg->buttons[4] && !imu_zero_prev_) {
-            imu_zero_pub_->publish(std_msgs::msg::Empty());
+        // // ── IMU zero/reset buttons ──
+        // if (msg->buttons.size() > 4 && msg->buttons[4] && !imu_zero_prev_) {
+        //     imu_zero_pub_->publish(std_msgs::msg::Empty());
+        // }
+        // if (msg->buttons.size() > 5 && msg->buttons[5] && !imu_reset_prev_) {
+        //     imu_reset_pub_->publish(std_msgs::msg::Empty());
+        // }
+
+        // ── Velocity limit button ──
+        if (msg->buttons.size() > 4 && msg->buttons[4] && !vel_limit_prev_) {
+            auto m = std_msgs::msg::Bool();
+            m.data = !vel_limit_active_;          // toggle
+            vel_limit_active_ = m.data;
+            vel_limit_pub_->publish(m);
         }
-        if (msg->buttons.size() > 5 && msg->buttons[5] && !imu_reset_prev_) {
-            imu_reset_pub_->publish(std_msgs::msg::Empty());
-        }
-        imu_zero_prev_  = msg->buttons.size() > 4 && msg->buttons[4];
-        imu_reset_prev_ = msg->buttons.size() > 5 && msg->buttons[5];
+        vel_limit_prev_ = msg->buttons.size() > 4 && msg->buttons[4];
+
+        // imu_zero_prev_  = msg->buttons.size() > 4 && msg->buttons[4];
+        // imu_reset_prev_ = msg->buttons.size() > 5 && msg->buttons[5];
 
         // ── Axis 2 — tank turn (button 1 held + X/Y within deadzone) ──
         // Speed comes from the twist axis value, written into linear.x.
@@ -160,12 +173,12 @@ private:
             if (button_held && xy_clear && std::abs(twist) > tank_threshold_) {
                 if (twist > tank_threshold_) {
                     if (!tank_active_ || tank_direction_ != 1) {
-                        publishMode("tank_turn_right");
+                        publishMode("tank_turn_left");
                         tank_active_    = true;
                         tank_direction_ = 1;                    }
                 } else {
                     if (!tank_active_ || tank_direction_ != -1) {
-                        publishMode("tank_turn_left");
+                        publishMode("tank_turn_right");
                         tank_active_    = true;
                         tank_direction_ = -1;
                     }
@@ -231,6 +244,10 @@ private:
     bool tank_active_    = false;
     int  tank_direction_ = 0;  // -1 = left, 0 = none, 1 = right
 
+    bool vel_limit_prev_ = false;
+    bool vel_limit_active_ = false;
+
+
     // Mode button table: built from YAML, each entry is (button_index, mode_name)
     std::vector<std::pair<int, std::string>> mode_buttons_;
 
@@ -240,6 +257,8 @@ private:
     rclcpp::Subscription<sensor_msgs::msg::Joy>::SharedPtr joy_sub_;
     rclcpp::Publisher<std_msgs::msg::Empty>::SharedPtr imu_zero_pub_;
     rclcpp::Publisher<std_msgs::msg::Empty>::SharedPtr imu_reset_pub_;
+    rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr vel_limit_pub_;
+
     // Empty is a ROS2 message type with no fields at all. Used purely as a signal/trigger when you only care
     // that a message was sent, not what it contains. Like a doorbell — you don't need data, just the ring.
 };

@@ -33,6 +33,7 @@
 #include <std_msgs/msg/float32.hpp>
 #include <std_msgs/msg/float32_multi_array.hpp>
 #include <std_msgs/msg/string.hpp>
+#include <std_msgs/msg/bool.hpp>
 #include <vector>
 #include <set>
 #include <map>
@@ -121,6 +122,7 @@ public:
         double loop_rate   = this->get_parameter("loop_rate").as_double();
         std::string default_mode = this->get_parameter("default_mode").as_string();
 
+        active_max_velocity_ = max_velocity_;
         // ── Build mode table ──
         mode_table_ = buildDefaultModes(layout_);
 
@@ -175,6 +177,15 @@ public:
         position_sub_ = this->create_subscription<std_msgs::msg::String>(
             "/robot_position", 10,
             std::bind(&DynamixelDriverNode::positionCallback, this, std::placeholders::_1));
+
+        vel_limit_sub_ = this->create_subscription<std_msgs::msg::Bool>(
+            "/velocity_limit", 10,
+            [this](const std_msgs::msg::Bool::SharedPtr msg) {
+                active_max_velocity_ = msg->data
+                    ? vertical_transition_velocity_
+                    : max_velocity_;
+                RCLCPP_INFO(this->get_logger(), "Velocity ceiling: %d", active_max_velocity_);
+            });
 
         status_pub_ = this->create_publisher<std_msgs::msg::Float32MultiArray>(
             "/motor_status", 10);
@@ -473,7 +484,7 @@ private:
             switch (cmd.type) {
                 case ControlType::VELOCITY: {
                     int flip = cmd.reverse ? -1 : 1;
-                    int32_t vel = static_cast<int32_t>(clamped * effective_k * max_velocity_);
+                    int32_t vel = static_cast<int32_t>(clamped * effective_k * active_max_velocity_);
                     writeDwordRegister(id, ADDR_GOAL_VELOCITY, vel * sign * flip);
                     break;
                 }
@@ -548,6 +559,8 @@ private:
     int         vertical_transition_velocity_;
     double      max_current_ma_;
     int16_t     max_current_units_;
+    int active_max_velocity_;   // initialized to max_velocity_ in constructor
+
     // Robot position state — updated by /robot_position subscription
     std::string current_robot_position_ = "unknown";
 
@@ -571,6 +584,7 @@ private:
     rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr status_pub_;
     rclcpp::TimerBase::SharedPtr status_timer_;
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr position_sub_;
+    rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr vel_limit_sub_;
 };
 
 int main(int argc, char** argv)

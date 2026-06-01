@@ -41,6 +41,7 @@ ament_target_dependencies(joy_mapper_node
   rclcpp
   sensor_msgs
   geometry_msgs
+  std_msgs
 )
 
 # Install executables
