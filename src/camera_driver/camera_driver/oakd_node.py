@@ -541,6 +541,9 @@ class OakDNode(RosNode):
         # IMU button subscriptions
         self.create_subscription(Empty, '/imu/zero',  lambda _: self._imu_zero(),  10)
         self.create_subscription(Empty, '/imu/reset', lambda _: self._imu_reset(), 10)
+        
+        self.create_subscription(String, '/drive_mode',
+            lambda msg: setattr(state, 'current_drive_mode', msg.data), 10)
 
         # Motor status subscription — bridges /motor_status topic into shared state for the dashboard
         # Data layout per motor: [rpm, temp, voltage]; order matches active_ids_: RL=1, FR=6, RR=8, FL=10

@@ -581,6 +581,13 @@ DASHBOARD_HTML = """
             </div>
           </div>
 
+          <div class="section">
+            <div class="section-title robot">Drive Mode</div>
+            <div style="padding: 10px 12px; background: var(--bg-raised); border-radius: 6px; border: 1px solid var(--border);">
+              <span id="drive-mode-label" style="font-family:'JetBrains Mono',monospace; font-size:16px; font-weight:700; text-transform:uppercase; letter-spacing:1px; color:var(--robot-ops);">UNKNOWN</span>
+            </div>
+          </div>
+
           <!-- ──── IMU ORIENTATION ──── -->
           <div class="section">
             <div class="section-title robot">IMU — Orientation</div>
@@ -1154,8 +1161,10 @@ DASHBOARD_HTML = """
 
     // ── Status polling ──
     function pollFront() {
-      fetch(FRONT_BASE + '/status').then(r => r.json()).then(() => {
+      fetch(FRONT_BASE + '/status').then(r => r.json()).then(d => {
         document.getElementById('front-dot').className = 'status-dot live';
+        const el = document.getElementById('drive-mode-label');
+        if (el && d.drive_mode) el.textContent = d.drive_mode.replace(/_/g, ' ');
       }).catch(() => {
         document.getElementById('front-dot').className = 'status-dot offline';
       });
@@ -1172,8 +1181,10 @@ DASHBOARD_HTML = """
 
     setInterval(pollFront, 3000);
     setInterval(connectRear, 5000);
+    setInterval(pollDriveMode, 150);
     pollFront();
     connectRear();
+    pollDriveMode();
 
     // ── IMU polling ──
     function updateBar(id, value, maxVal) {
@@ -1267,6 +1278,13 @@ DASHBOARD_HTML = """
       }).catch(() => {});
     }
     setInterval(pollPosition, 200);  // 5Hz
+
+    function pollDriveMode() {
+      fetch(FRONT_BASE + '/status').then(r => r.json()).then(d => {
+        const el = document.getElementById('drive-mode-label');
+        if (el && d.drive_mode) el.textContent = d.drive_mode.replace(/_/g, ' ');
+      }).catch(() => {});
+    }
 
     // ── Motor status polling ──
     function pollMotorStatus() {

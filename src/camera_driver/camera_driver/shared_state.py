@@ -111,6 +111,8 @@ led_cmd_pub = None   # rclpy publisher for /led/cmd (std_msgs/String)
 
 ####
 
+current_drive_mode = "unknown"
+
 # ═══════════════════════════════════════════════════════
 # Camera config (modified by dashboard, read by pipeline)
 # ═══════════════════════════════════════════════════════

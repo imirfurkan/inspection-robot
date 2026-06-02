@@ -128,6 +128,7 @@ def status():
     with recording_lock:
         cfg["recording"] = state.recording_active
     cfg["device_connected"] = state.device_ref is not None
+    cfg["drive_mode"] = state.current_drive_mode
     return jsonify(cfg)
 
 
