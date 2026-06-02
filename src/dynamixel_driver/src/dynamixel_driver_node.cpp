@@ -181,9 +181,8 @@ public:
         vel_limit_sub_ = this->create_subscription<std_msgs::msg::Bool>(
             "/velocity_limit", 10,
             [this](const std_msgs::msg::Bool::SharedPtr msg) {
-                active_max_velocity_ = msg->data
-                    ? vertical_transition_velocity_
-                    : max_velocity_;
+                active_max_velocity_ = msg->data ? vertical_transition_velocity_ : max_velocity_;
+                if (!msg->data) vertical_seq_active_ = false;  // vel limit turned off, cancel sequence
                 RCLCPP_INFO(this->get_logger(), "Velocity ceiling: %d", active_max_velocity_);
             });
 
@@ -376,11 +375,56 @@ private:
         applyOperatingModeChanges(new_mode);
 
         active_mode_ = &new_mode;
+
+        if (msg->data == "drive_ramp") {
+            vertical_seq_active_ = false;  // reset vertical sequence if manually switching to drive_vertical
+            active_max_velocity_ = max_velocity_;  // ensure max velocity is reset when switching to drive_vertical
+            RCLCPP_INFO(this->get_logger(), "Switched to drive_ramp mode, vertical seq is false, max velocity reset to %d", active_max_velocity_);
+        }
     }
 
+    // Direct internal mode switch — bypasses the topic, used by vertical transition sequencer.
+    void switchDriveMode(const std::string& mode_name)
+    {
+        auto it = mode_table_.find(mode_name);
+        if (it == mode_table_.end()) {
+            RCLCPP_WARN(this->get_logger(), "[vertical-seq] unknown mode '%s'", mode_name.c_str());
+            return;
+        }
+        RCLCPP_INFO(this->get_logger(), "[vertical-seq] %s → %s",
+            active_mode_ ? active_mode_->name.c_str() : "NONE", mode_name.c_str());
+        applyOperatingModeChanges(it->second);
+        active_mode_ = &it->second;
+    }
+    
     void positionCallback(const std_msgs::msg::String::SharedPtr msg)
     {
+        if (msg->data == current_robot_position_) return;  // dedup
         current_robot_position_ = msg->data;
+
+        // ── Vertical transition sequence ──
+        // Engages when velocity ceiling is set to vertical_transition_velocity_.
+        // Ignores horizontal_buckling (robot naturally passes through it on the way up).
+        if (active_max_velocity_ == vertical_transition_velocity_) {
+            vertical_seq_active_ = true;
+        }
+
+        if (vertical_seq_active_) {
+            if (current_robot_position_ == "transitional-2") {
+                switchDriveMode("drive_rear_assist");
+            } else if (current_robot_position_ == "vertical_buckling") {
+                switchDriveMode("rear_geri_front_ileri");
+            } else if (current_robot_position_ == "vertical") {
+                switchDriveMode("drive_all");
+                vertical_seq_active_ = false;
+            }
+        }
+
+        // ── Ramp mode auto-exit ──
+        // When drive_ramp is active and robot reaches the target position, revert to drive_all.
+        if (active_mode_ && active_mode_->name == "drive_ramp" && current_robot_position_ == "transitional-2") {
+            switchDriveMode("drive_all");
+}
     }
     // ── Command callback ──────────────────────────────────────────
     // Generic — no mode-specific logic. Handles direction changes by
@@ -574,6 +618,9 @@ private:
     bool going_forward_ = true;
 
     bool motors_initialized_ = false;
+
+    bool vertical_seq_active_ = false; // Whether we're currently in the vertical transition sequence
+    std::string last_position_label_ = "";
 
     dynamixel::PortHandler*   port_handler_   = nullptr;
     dynamixel::PacketHandler* packet_handler_ = nullptr;

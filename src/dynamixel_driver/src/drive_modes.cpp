@@ -167,8 +167,8 @@ std::map<std::string, DriveModeDef> buildDefaultModes(const MotorLayout& m)
         }
     };
 
-    modes["drive_vertical"] = {
-        .name = "drive_all",
+    modes["drive_ramp"] = {
+        .name = "drive_ramp",
         .forward_profile = {
             {FL, {ControlType::VELOCITY, 1.0f, false}},
             {FR, {ControlType::VELOCITY, 1.0f, false}},
