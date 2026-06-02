@@ -420,12 +420,18 @@ private:
             }
         }
 
-        // ── Ramp mode auto-exit ──
-        // When drive_ramp is active and robot reaches the target position, revert to drive_all.
         if (active_mode_ && active_mode_->name == "drive_ramp" && current_robot_position_ == "transitional-2") {
+            switchDriveMode("drive_rear_assist");
+            ramp_seq_active_ = true;
+        }  // ← missing
+
+        if (ramp_seq_active_ && active_mode_ && active_mode_->name == "drive_rear_assist" && current_robot_position_ == "horizontal") {
             switchDriveMode("drive_all");
-}
+            ramp_seq_active_ = false;
+        }
     }
+    
+    
     // ── Command callback ──────────────────────────────────────────
     // Generic — no mode-specific logic. Handles direction changes by
     // switching motor operating modes at the zero crossing so HOLD
@@ -620,6 +626,8 @@ private:
     bool motors_initialized_ = false;
 
     bool vertical_seq_active_ = false; // Whether we're currently in the vertical transition sequence
+    bool ramp_seq_active_ = false;  // member variable
+
     std::string last_position_label_ = "";
 
     dynamixel::PortHandler*   port_handler_   = nullptr;

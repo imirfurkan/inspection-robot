@@ -618,7 +618,7 @@ class OakDNode(RosNode):
                 f"position_thresholds ({len(thresholds)}) - 1!")
             self.get_logger().warn("Using default position ranges.")
             thresholds = [0.0, 2.0, 10.0, 45.0, 55.0, 79.0, 87.0, 90.0]
-            labels = ["horizontal", "horizontal_buckling", "transitional-1", "transitional-2", "transitional-3", "vertical_buckling", "vertical"])
+            labels = ["horizontal", "horizontal_buckling", "transitional-1", "transitional-2", "transitional-3", "vertical_buckling", "vertical"]
 
         # Build the classifier table
         ranges = []
