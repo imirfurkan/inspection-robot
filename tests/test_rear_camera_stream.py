@@ -95,7 +95,7 @@ current_config = {
     "wb_blue_gain": 1.5,     # manual blue gain
     # Flip / rotate
     "hflip": False,
-    "vflip": False,
+    "vflip": True,
     # Overlay
     "show_fps": True,
     "show_timestamp": False,
@@ -827,7 +827,7 @@ def api_reset():
         "auto_exposure": True, "exposure_time": 33000,
         "analogue_gain": 1.0, "auto_wb": True,
         "wb_red_gain": 1.5, "wb_blue_gain": 1.5,
-        "hflip": False, "vflip": False,
+        "hflip": False, "vflip": True,
         "show_fps": True, "show_timestamp": False,
         "jpeg_quality": 80,
     }

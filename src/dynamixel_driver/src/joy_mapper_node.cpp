@@ -198,13 +198,18 @@ private:
             }
         }
 
-        // ── Deadman switch check ──
+        // ── Enable toggle (rising edge) ──
         if (enable_button_ >= 0) {
-            if (enable_button_ >= static_cast<int>(msg->buttons.size()) ||
-                !msg->buttons[enable_button_])
-            {
-                auto twist = geometry_msgs::msg::Twist();
-                cmd_pub_->publish(twist);
+            bool pressed = (enable_button_ < static_cast<int>(msg->buttons.size()) &&
+                            msg->buttons[enable_button_]);
+            if (pressed && !enable_btn_prev_) {
+                joy_enabled_ = !joy_enabled_;
+                RCLCPP_INFO(this->get_logger(), "Joy input %s", joy_enabled_ ? "ENABLED" : "DISABLED");
+            }
+            enable_btn_prev_ = pressed;
+
+            if (!joy_enabled_) {
+                cmd_pub_->publish(geometry_msgs::msg::Twist());
                 return;
             }
         }
@@ -247,6 +252,8 @@ private:
     bool vel_limit_prev_ = false;
     bool vel_limit_active_ = false;
 
+    bool joy_enabled_     = false;  // toggle state
+    bool enable_btn_prev_ = false;
 
     // Mode button table: built from YAML, each entry is (button_index, mode_name)
     std::vector<std::pair<int, std::string>> mode_buttons_;

@@ -60,7 +60,7 @@ joy_mapper_node:
     max_angular_speed: 1.0
     axis_linear: 1          # stick Y (inverted in code)
     axis_angular: 2         # stick twist Z
-    enable_button: -1       # -1 = no deadman switch
+    enable_button: 0       # -1 = no deadman switch
 
     # ── Mode-to-button mapping ──
     # Parallel arrays: mode_names[i] fires on mode_buttons[i].
@@ -76,8 +76,6 @@ joy_mapper_node:
       - "rear_geri_front_ileri"   # rear hold + front current nudge
       - "drive_front_only"    # rear hold + front velocity
       - "drive_rear_only"     # rear velocity + front hold
-      # - "steer_trial_left"     # steer trial: left wheel current assist
-      # - "steer_trial_right"    # steer trial: right wheel current assist
       - "drive_ramp" 
 
 
@@ -87,7 +85,5 @@ joy_mapper_node:
       - 9                     # drive_front_nudge
       - 10                    # drive_front_only
       - 11                    # drive_rear_only
-      # - 4                     # steer_trial_left
-      # - 5                     # steer_trial_right
       - 6                    
       - 1 # tank turn activation

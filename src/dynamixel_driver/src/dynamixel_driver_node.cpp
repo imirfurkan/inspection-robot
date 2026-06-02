@@ -420,12 +420,12 @@ private:
             }
         }
 
-        if (active_mode_ && active_mode_->name == "drive_ramp" && current_robot_position_ == "transitional-2") {
-            switchDriveMode("drive_rear_assist");
+        if (!vertical_seq_active_ && active_mode_ && active_mode_->name == "drive_ramp" && current_robot_position_ == "transitional-2") {
+            switchDriveMode("drive_rear_only");
             ramp_seq_active_ = true;
         }  // ← missing
 
-        if (ramp_seq_active_ && active_mode_ && active_mode_->name == "drive_rear_assist" && current_robot_position_ == "horizontal") {
+        if (ramp_seq_active_ && active_mode_ && active_mode_->name == "drive_rear_only" && current_robot_position_ == "horizontal_buckling") {
             switchDriveMode("drive_all");
             ramp_seq_active_ = false;
         }
@@ -479,12 +479,12 @@ private:
         if (is_drive_all) {
             ak = computeAckermannK(current_steering_position_);
 
-            // Print current K proportions when actively steering (position non-zero)
-            if (std::abs(current_steering_position_) > 0.01f) {
-                RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 200,
-                    "[drive_all] steering=%.2f  FL=%.3f  FR=%.3f  RL=%.3f  RR=%.3f",
-                    current_steering_position_, ak.fl, ak.fr, ak.rl, ak.rr);
-            }
+            // // Print current K proportions when actively steering (position non-zero)
+            // if (std::abs(current_steering_position_) > 0.01f) {
+            //     RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 200,
+            //         "[drive_all] steering=%.2f  FL=%.3f  FR=%.3f  RL=%.3f  RR=%.3f",
+            //         current_steering_position_, ak.fl, ak.fr, ak.rl, ak.rr);
+            // }
         }
 
         for (uint8_t id : active_ids_) {
