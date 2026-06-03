@@ -28,13 +28,16 @@ cat > ~/Desktop/robot_start.sh << 'EOF'
 #!/bin/bash
 # robot_start.sh
 
-PI_IP=$(docker context inspect remote --format '{{.Endpoints.docker.Host}}' | grep -oP '\d+\.\d+\.\d+\.\d+')
+PI_IP=10.42.0.106
 
 # Cleanup on Pi
 docker --context remote stop my_robot 2>/dev/null
 docker --context remote rm my_robot 2>/dev/null
-ssh admin@$PI_IP "sudo pkill -f led_node 2>/dev/null; sudo pkill -f oakd_node 2>/dev/null"
-sleep 3
+ssh admin@$PI_IP "sudo pkill -f led_node 2>/dev/null; \
+  sudo pkill -f oakd_node 2>/dev/null; \
+  sudo pkill -f test_rear_camera 2>/dev/null; \
+  sudo pkill -f libcamera 2>/dev/null"
+sleep 2
 
 tmux kill-session -t robot 2>/dev/null
 tmux new-session -d -s robot -x 220 -y 50
@@ -51,14 +54,21 @@ tmux send-keys -t robot:0 \
 
 # Pane 1: joy_node
 tmux split-window -t robot:0 -v
-tmux send-keys -t robot:0.1 "sleep 5 && ros2 run joy joy_node" Enter
+tmux send-keys -t robot:0.1 "sleep 2 && ros2 run joy joy_node" Enter
 
-# Pane 2: open dashboard in browser after delay
-tmux split-window -t robot:0.1 -v
-tmux send-keys -t robot:0.2 "sleep 10 && xdg-open http://${PI_IP}:8080" Enter
+# Pane 2: rear camera (after ROS2 is up)
+tmux split-window -t robot:0.1 -v -l 8
+tmux send-keys -t robot:0.2 "sleep 5 && ssh admin@${PI_IP} 'python3 /home/admin/ros2_ws/tests/test_rear_camera_stream.py'" Enter
+
+# Pane 3: open dashboard in browser
+tmux split-window -t robot:0.2 -v -l 3
+tmux send-keys -t robot:0.3 "sleep 7 && xdg-open http://${PI_IP}:8080" Enter
 
 tmux attach -t robot
-EOF
+
+ssh admin@10.42.0.106 'python3 /home/admin/ros2_ws/tests/test_rear_camera_2.py'
+```
+
 
 chmod +x ~/Desktop/robot_start.sh
 ```
@@ -69,13 +79,15 @@ chmod +x ~/Desktop/robot_start.sh
 
 ```bash
 cat > ~/Desktop/robot_start.desktop << 'EOF'
+
+#!/usr/bin/env xdg-open
 [Desktop Entry]
 Type=Application
 Name=Start Robot
 Exec=konsole -e bash -c '/home/imirdo/Desktop/robot_start.sh; exec bash'
 Icon=utilities-terminal
 Terminal=false
-EOF
+
 
 chmod +x ~/Desktop/robot_start.desktop
 ```
